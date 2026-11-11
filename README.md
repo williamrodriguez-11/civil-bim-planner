@@ -8,6 +8,20 @@ La plataforma solicita una cuenta personal. Desde **Crear una cuenta**, elige un
 
 ### Publicación en internet
 
+#### Acceso con Google, Apple y Microsoft
+
+Cada proveedor usa una aplicación web registrada por el administrador. En Render configura `OAUTH_SESSION_SECRET` con un secreto aleatorio estable de al menos 32 bytes. Para cada proveedor habilitado, añade el par de variables indicado a continuación y registra su URL de retorno exacta.
+
+| Proveedor | Variables en Render | URL de retorno |
+| --- | --- | --- |
+| Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `https://civil-bim-planner.onrender.com/api/auth/social/google/callback` |
+| Apple | `APPLE_CLIENT_ID`, `APPLE_CLIENT_SECRET` | `https://civil-bim-planner.onrender.com/api/auth/social/apple/callback` |
+| Microsoft | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` | `https://civil-bim-planner.onrender.com/api/auth/social/microsoft/callback` |
+
+Google requiere un cliente OAuth de tipo aplicación web. Apple usa el Services ID y un secreto JWT firmado por el equipo de Apple Developer que debe renovarse antes de vencer. Para Microsoft, registra una aplicación web que admita cuentas personales. Para usar exclusivamente las cuentas de una organización, configura también `MICROSOFT_TENANT_ID` con su UUID. Guarda los cambios en Render y vuelve a desplegar.
+
+El primer acceso con cada identidad crea un espacio propio. Para regresar a los mismos proyectos, usa siempre el mismo método y cuenta. Registrar un correo como usuario y autenticarlo con un proveedor son identidades independientes.
+
 Para Render Free con Neon, selecciona Docker y configura `DATABASE_URL` en las variables del servicio con la conexión agrupada de Neon. La app crea sus tablas en PostgreSQL al arrancar y guarda allí los proyectos y los archivos. Para desarrollo, la CLI de Neon guarda la misma variable en `.env.local`, excluido de Git. La base SQLite anterior sigue disponible indicando su ruta en `CIVIL_BIM_DB` y dejando sin definir la variable de entorno `DATABASE_URL`.
 
 El `Dockerfile` compila la interfaz y ejecuta FastAPI. En Render, crea un servicio web desde el repositorio con el runtime Docker y un disco persistente montado en `/var/data`. La base SQLite guarda allí las cuentas, proyectos y archivos. Usa una sola instancia y comparte la URL HTTPS del servicio. Render suministra el nombre del host automáticamente. En otro proveedor, configura `CIVIL_BIM_HOST` con el dominio público exacto, habilita HTTPS y monta un volumen persistente en la misma ruta.

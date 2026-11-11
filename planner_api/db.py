@@ -12,6 +12,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS account(
  id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, salt BLOB NOT NULL,
  password_hash BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS social_identity(
+ issuer TEXT NOT NULL, subject TEXT NOT NULL, account_id INTEGER NOT NULL REFERENCES account(id),
+ PRIMARY KEY(issuer, subject));
 CREATE TABLE IF NOT EXISTS session(
  digest BLOB PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES account(id),
  expires INTEGER NOT NULL);

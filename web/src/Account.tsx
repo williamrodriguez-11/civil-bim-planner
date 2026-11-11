@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Layers3 } from "lucide-react";
+import { Eye, EyeOff, Layers3 } from "lucide-react";
 import { api, cleanError } from "./model";
 
 type User = { username: string };
@@ -16,11 +16,14 @@ export function Account({
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [providers, setProviders] = useState<string[]>([]);
 
   useEffect(() => {
     const expired = () => {
       setUser(null);
       setPassword("");
+      setVisible(false);
     };
     const changed = (e: StorageEvent) => {
       if (e.key === "civil-session-change") window.location.reload();
@@ -31,6 +34,15 @@ export function Account({
     window.addEventListener("civil-session-expired", expired);
     window.addEventListener("storage", changed);
     window.addEventListener("pageshow", restored);
+    api<string[]>("/auth/social/providers")
+      .then(setProviders)
+      .catch(() => {});
+    const result = new URLSearchParams(location.search).get("acceso");
+    if (result === "error")
+      setError("No se completó el acceso. Puedes volver a intentarlo.");
+    if (result === "ok")
+      localStorage.setItem("civil-session-change", crypto.randomUUID());
+    if (result) history.replaceState(null, "", location.pathname);
     fetch("/api/auth/me", { cache: "no-store" })
       .then(async (r) => {
         if (r.ok) setUser(await r.json());
@@ -49,6 +61,7 @@ export function Account({
   function sessionChanged() {
     localStorage.setItem("civil-session-change", crypto.randomUUID());
     setPassword("");
+    setVisible(false);
     setError("");
   }
 
@@ -99,28 +112,41 @@ export function Account({
           }}
         >
           <label>
-            Nombre de usuario
+            Nombre de usuario o correo electrónico
             <input
               required
               autoComplete="username"
               autoCapitalize="none"
-              maxLength={64}
+              maxLength={254}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
             />
           </label>
-          <label>
-            Contraseña
-            <input
-              required
-              type="password"
-              autoComplete={register ? "new-password" : "current-password"}
-              minLength={register ? 12 : undefined}
-              maxLength={256}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
+          <div className="password-group">
+            <label htmlFor="civil-password">Contraseña</label>
+            <div className="password-input">
+              <input
+                id="civil-password"
+                required
+                type={visible ? "text" : "password"}
+                autoComplete={register ? "new-password" : "current-password"}
+                minLength={register ? 12 : undefined}
+                maxLength={256}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                aria-label={
+                  visible ? "Ocultar contraseña" : "Mostrar contraseña"
+                }
+                aria-pressed={visible}
+                onClick={() => setVisible(!visible)}
+              >
+                {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
           {register && (
             <small>Elige una contraseña de al menos 12 caracteres.</small>
           )}
@@ -133,11 +159,31 @@ export function Account({
             {register ? "Crear cuenta" : "Entrar"}
           </button>
         </form>
+        <div className="social-options" aria-label="Otras opciones de acceso">
+          {["Google", "Apple", "Microsoft"].map((name) => {
+            const id = name.toLowerCase();
+            const ready = providers.includes(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                disabled={!ready || busy}
+                onClick={() =>
+                  location.assign("/api/auth/social/" + id + "/start")
+                }
+              >
+                Continuar con {name}
+                {!ready && <small>Pendiente de activación</small>}
+              </button>
+            );
+          })}
+        </div>
         <button
           disabled={busy}
           onClick={() => {
             setRegister(!register);
             setPassword("");
+            setVisible(false);
             setError("");
           }}
         >

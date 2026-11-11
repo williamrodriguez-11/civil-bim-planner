@@ -29,6 +29,7 @@ from .db import INTEGRITY_ERRORS, connect, initialize
 from .models import Mapping, Options, Plan, Project
 from .planning import schedule
 from .project_xml import project_xml
+from . import social
 from .tables import (
     MAX_BYTES,
     calculate,
@@ -48,6 +49,8 @@ async def lifespan(app):
 
 app = FastAPI(title="Civil BIM Planner", lifespan=lifespan)
 app.include_router(auth_router)
+social.configure(app)
+app.include_router(social.router)
 project_routes = APIRouter(
     prefix="/api/projects/{pid}", dependencies=[Depends(require_project)]
 )
@@ -66,7 +69,13 @@ async def local_origin(request: Request, call_next):
     if request.method not in {"GET", "HEAD", "OPTIONS"} and origin:
         from urllib.parse import urlsplit
 
-        if urlsplit(origin).netloc != request.headers.get("host"):
+        apple_callback = (
+            request.url.path == "/api/auth/social/apple/callback"
+            and origin == "https://appleid.apple.com"
+        )
+        if not apple_callback and urlsplit(origin).netloc != request.headers.get(
+            "host"
+        ):
             return JSONResponse({"detail": "Origen no permitido."}, status_code=403)
     response = await call_next(request)
     if request.url.path.startswith("/api/"):

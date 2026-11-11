@@ -10,7 +10,7 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await page.goto("/");
   await page.getByRole("button", { name: "Crear una cuenta" }).click();
   await page.getByLabel("Nombre de usuario").fill("pilotes");
-  await page.getByLabel("Contraseña").fill("cuenta para pruebas");
+  await page.getByLabel("Contraseña", { exact: true }).fill("cuenta para pruebas");
   await page.getByRole("button", { name: "Crear cuenta", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Resumen general" }),

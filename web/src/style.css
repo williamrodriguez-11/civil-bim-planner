@@ -51,6 +51,13 @@
 .account-panel form {
   gap: 16px;
 }
+.account-panel form > label { margin: 0; }
+.password-group, .social-options { display: grid; gap: 8px; }
+.password-input { display: flex; align-items: stretch; gap: 5px; }
+.password-input input { flex: 1; min-width: 0; }
+.password-input button { width: 44px; flex-shrink: 0; }
+.social-options { border-top: 1px solid var(--border); padding-top: 16px; }
+.social-options small { font-size: 11px; font-weight: 400; }
 body {
   min-width: 300px;
 }

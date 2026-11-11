@@ -96,10 +96,13 @@ def register(data: Credentials, request: Request, response: Response):
     limit_attempts(request)
     username = data.username.strip().lower()
     password = data.password.get_secret_value()
-    if not re.fullmatch(r"[a-z0-9._-]{3,64}", username):
+    is_email = len(username) <= 254 and re.fullmatch(
+        r"[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+", username
+    )
+    if not is_email and not re.fullmatch(r"[a-z0-9._-]{3,64}", username):
         raise HTTPException(
             422,
-            "Usa entre 3 y 64 letras, números, puntos, guiones o guiones bajos para el usuario.",
+            "Ingresa un correo válido o un usuario de 3 a 64 letras, números, puntos o guiones.",
         )
     if not 12 <= len(password) <= 256:
         raise HTTPException(422, "Usa una contraseña de entre 12 y 256 caracteres.")
