@@ -1,0 +1,3 @@
+Nivel;Tipo;Cantidad;Ancho;Profundidad;Altura;Volumen
+Nivel 1;C 30x40;2;0,30;0,40;3,00;0,72
+Nivel 2;C 40x40;1;0,40;0,40;3,00;0,48

@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!requirements*.txt
+!planner_api/
+!planner_api/*.py
+!planner_api/postgres.sql
+!bim_planner/
+!bim_planner/*.py
+!web/
+!web/src/
+!web/src/**
+!web/*.json
+!web/index.html
+!web/vite.config.ts
