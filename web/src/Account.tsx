@@ -17,7 +17,6 @@ export function Account({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [providers, setProviders] = useState<string[]>([]);
 
   useEffect(() => {
     const expired = () => {
@@ -34,9 +33,6 @@ export function Account({
     window.addEventListener("civil-session-expired", expired);
     window.addEventListener("storage", changed);
     window.addEventListener("pageshow", restored);
-    api<string[]>("/auth/social/providers")
-      .then(setProviders)
-      .catch(() => {});
     const result = new URLSearchParams(location.search).get("acceso");
     if (result === "error")
       setError("No se completó el acceso. Puedes volver a intentarlo.");
@@ -159,25 +155,6 @@ export function Account({
             {register ? "Crear cuenta" : "Entrar"}
           </button>
         </form>
-        <div className="social-options" aria-label="Otras opciones de acceso">
-          {["Google", "Apple", "Microsoft"].map((name) => {
-            const id = name.toLowerCase();
-            const ready = providers.includes(id);
-            return (
-              <button
-                key={id}
-                type="button"
-                disabled={!ready || busy}
-                onClick={() =>
-                  location.assign("/api/auth/social/" + id + "/start")
-                }
-              >
-                Continuar con {name}
-                {!ready && <small>Pendiente de activación</small>}
-              </button>
-            );
-          })}
-        </div>
         <button
           disabled={busy}
           onClick={() => {
