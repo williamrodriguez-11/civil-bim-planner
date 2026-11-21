@@ -75,6 +75,7 @@ class Task(Input):
 
 class Plan(Input):
     start: date = Field(default_factory=date.today)
+    status_date: date | None = None
     weekdays: set[int] = Field(default_factory=lambda: set(range(5)), min_length=1)
     holidays: set[date] = set()
     tasks: list[Task] = Field(default_factory=list, max_length=2000)

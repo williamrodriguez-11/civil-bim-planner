@@ -24,6 +24,8 @@ def project_xml(name, plan, tasks):
         MinutesPerWeek=480 * len(plan.weekdays),
         DurationFormat=7,
     )
+    if plan.status_date:
+        fields(root, StatusDate=f"{plan.status_date}T17:00:00")
     calendar = ET.SubElement(ET.SubElement(root, "Calendars"), "Calendar")
     fields(
         calendar, UID=1, Name="Calendario de obra", IsBaseCalendar=1, BaseCalendarUID=-1

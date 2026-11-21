@@ -129,7 +129,9 @@ def schedule(plan: Plan, sources, today=None):
     }
     for p, i, offset in reversed(constraints):
         latest[p] = min(latest[p], latest[i] - offset)
-    elapsed = bisect_left(days, (today or date.today()) + timedelta(days=1))
+    elapsed = bisect_left(
+        days, (plan.status_date or today or date.today()) + timedelta(days=1)
+    )
     output = []
     for t in sorted(plan.tasks, key=lambda t: tuple(map(int, t.wbs.split(".")))):
         i = t.id

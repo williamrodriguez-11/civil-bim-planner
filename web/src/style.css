@@ -841,6 +841,60 @@ dialog {
 dialog::backdrop {
   background: #11241d80;
 }
+.task-editor { width: min(720px, 94vw); }
+.field-help { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 9px 0 15px; }
+.task-section { min-width: 0; margin: 18px 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; }
+.task-section legend, .task-section summary { font-weight: 650; font-size: 14px; color: var(--ink); }
+.task-section legend { padding: 0 6px; }
+.task-section summary { cursor: pointer; }
+.task-section[open] > summary { margin-bottom: 15px; }
+.task-section > label { margin: 12px 0; }
+.task-section .field-help:last-child { margin-bottom: 0; }
+.task-section .chips { margin-top: 10px; }
+.schedule-preview { background: var(--soft); border-radius: 8px; padding: 13px; display: flex; gap: 12px 28px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.schedule-preview strong { display: block; color: var(--ink); margin-top: 4px; }
+.schedule-preview small { flex-basis: 100%; }
+.dependency { border-bottom: 1px solid var(--border); margin-bottom: 15px; padding-bottom: 12px; }
+.dependency .tools { align-items: end; }
+.dependency select { flex: 1 1 200px; }
+.dependency label { flex: 1 1 130px; }
+.schedule-toolbar { align-items: center; justify-content: space-between; }
+.schedule-toolbar > label:first-child { min-width: min(260px, 100%); }
+.schedule-scroll { overflow: auto; max-height: 65vh; border: 1px solid var(--border); border-radius: 9px; margin-top: 16px; }
+.schedule-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: 12px; }
+.schedule-table th { position: sticky; top: 0; z-index: 3; height: 52px; background: var(--soft); }
+.schedule-table td { height: 62px; background: var(--surface); }
+.schedule-table th, .schedule-table td { padding: 10px 12px; white-space: nowrap; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+.schedule-table th:first-child, .schedule-table td:first-child { position: sticky; left: 0; min-width: 58px; width: 58px; z-index: 2; }
+.schedule-table th:nth-child(2), .schedule-table td:nth-child(2) { position: sticky; left: 58px; min-width: 190px; max-width: 190px; z-index: 2; white-space: normal; }
+.schedule-table th:first-child, .schedule-table th:nth-child(2) { z-index: 4; }
+.schedule-table .task-name { display: block; border: 0; padding: 0; text-align: left; background: transparent; font-size: 12px; font-weight: 600; }
+.schedule-table td > small { display: block; font-size: 10px; margin-top: 4px; }
+.schedule-table progress { display: block; width: 78px; height: 5px; margin-top: 5px; accent-color: var(--green); }
+.schedule-table .timeline-cell { padding: 0; }
+.schedule-table .axis { padding: 0 8px; }
+.schedule-table .track { height: 61px; }
+.schedule-table .bar { top: 20px; height: 23px; }
+.schedule-table .bar span { position: relative; z-index: 1; }
+.task-editor .actions { position: sticky; bottom: -22px; padding: 14px 0; margin-bottom: -22px; background: var(--surface); border-top: 1px solid var(--border); z-index: 2; }
+.task-editor .chips button[aria-pressed="true"] { outline: 2px solid var(--green); outline-offset: -2px; }
+.schedule-table .schedule-group td { height: 36px; font-weight: 650; background: var(--soft); }
+.schedule-table .schedule-group td:nth-child(2) { max-width: none; }
+.schedule-behind { color: #9c5c15; }
+[data-theme="dark"] .schedule-behind { color: #edb66d; }
+.status-line { position: absolute; top: 0; bottom: 0; border-left: 2px dashed #4e73c3; z-index: 1; pointer-events: none; }
+.schedule-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 15px 0; font-size: 12px; color: var(--muted); }
+.schedule-legend span { display: flex; align-items: center; gap: 6px; }
+.schedule-legend i { width: 14px; height: 10px; border-radius: 2px; }
+.key-critical { background: #d4bb81; }
+.key-progress { background: #638d79; }
+.key-status { border-left: 2px dashed #4e73c3; }
+.schedule-help { border-top: 1px solid var(--border); padding-top: 15px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.schedule-help summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+@media (max-width: 600px) {
+  .schedule-table th:nth-child(2), .schedule-table td:nth-child(2) { min-width: 165px; max-width: 165px; }
+  .task-section { padding: 12px; }
+}
 .modal-head {
   display: flex;
   align-items: center;

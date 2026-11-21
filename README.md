@@ -56,6 +56,17 @@ El archivo `.civil-bim/planner.sqlite3` contiene proyectos, archivos originales,
 
 El cronograma trabaja en días laborables enteros. El intercambio XML representa cada jornada con ocho horas de trabajo. La holgura se calcula recorriendo la red de precedencias hacia atrás. El avance planificado se distribuye linealmente entre las fechas de cada actividad y el indicador global pondera el avance real por duración.
 
+### Seguimiento del cronograma
+
+La tabla de actividades y el Gantt comparten filas. Selecciona el nombre o la barra para editar. **Más columnas** muestra el porcentaje previsto, la holgura y la cantidad BIM. El buscador acepta nombres o códigos EDT; el filtro de ruta crítica y la escala permiten revisar la red.
+
+- **% completado** reemplaza la etiqueta «Avance real»: es el porcentaje registrado por el usuario, entre 0 y 100. No se calcula a partir del tiempo transcurrido ni de la cantidad BIM.
+- **% previsto** es la proporción de días laborables transcurridos al cierre de la fecha de seguimiento, respecto de la duración vigente. No representa una línea base. En **Calendario y seguimiento** puede fijarse una fecha de corte; vacía utiliza la fecha actual del servidor. Cambiarla no mueve las actividades ni altera el progreso registrado.
+- **No comenzar antes del** establece el comienzo más temprano permitido. **Debe finalizar el** fija una fecha obligatoria de fin, que debe ser laborable y compatible con la duración y las dependencias. Ambas restricciones son opcionales.
+- Las relaciones se muestran en español: **FC** (FS), **CC** (SS), **FF** (FF) y **CF** (SF). Un desfase positivo espera días laborables; uno negativo adelanta el vínculo. Los datos y el XML mantienen los códigos compatibles existentes.
+
+Los proyectos previos conservan su programación. El XML incluye la fecha de seguimiento cuando está fijada. La interfaz adopta términos y una disposición familiar de Project; todavía no incluye recursos, nivelación, líneas base ni reprogramación de trabajo restante.
+
 ## Registro de implementación y verificación
 
 | Fase | Comportamiento disponible | Comprobación |

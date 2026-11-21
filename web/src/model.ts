@@ -81,6 +81,7 @@ export interface Task {
 }
 export interface Plan {
   start: string;
+  status_date?: string | null;
   weekdays: number[];
   holidays: string[];
   tasks: Task[];

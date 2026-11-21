@@ -65,10 +65,12 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await page.getByLabel("Nombre de la actividad").fill("Hormigonar pilotes");
   await page.getByLabel("Código EDT").fill("1.1");
   await page.getByLabel("Fase 1").fill("Cimentación");
+  await page.getByText("Duración a partir de cantidades BIM (opcional)", { exact: true }).click();
   await page.getByLabel("Origen de la duración").selectOption({ index: 1 });
   await page.getByLabel("Rendimiento").fill("5");
   await page.getByRole("button", { name: "Guardar actividad" }).click();
   await expect(page.getByText("1 · Cimentación")).toBeVisible();
+  await page.getByLabel("Más columnas").check();
   await expect(page.getByRole("cell", { name: "15 m³" })).toBeVisible();
   await page.getByRole("button", { name: "Reportes", exact: true }).click();
   const download = page.waitForEvent("download");
