@@ -15,7 +15,8 @@ from .quantities import QuantityConfig, summarize
 
 def export_excel(detail: pd.DataFrame, issues: pd.DataFrame,
                  configs: list[tuple[str, QuantityConfig, dict]],
-                 sources: dict[str, pd.DataFrame], *, project_info: dict | None = None) -> bytes:
+                 sources: dict[str, pd.DataFrame], *, project_info: dict | None = None,
+                 sections: list[str] | None = None) -> bytes:
     """Devuelve valores calculados, no fórmulas ni vínculos ejecutables del archivo fuente."""
     book = Workbook()
     book.active.title = "Resumen por nivel"
@@ -87,5 +88,12 @@ def export_excel(detail: pd.DataFrame, issues: pd.DataFrame,
         row[1].alignment = Alignment(wrap_text=True, vertical="top")
         sheet.row_dimensions[row[0].row].height = 44
     output = BytesIO()
+    if sections is not None:
+        for name in list(book.sheetnames):
+            section = "Fuentes" if name.startswith("Fuente ") else name
+            if section not in sections:
+                del book[name]
+        if not book.sheetnames:
+            raise ValueError("Selecciona al menos una sección con contenido.")
     book.save(output)
     return output.getvalue()

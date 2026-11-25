@@ -46,8 +46,8 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await page.getByRole("button", { name: "Calcular y guardar" }).click();
   await expect(page.getByRole("status")).toContainText("sin filas cuantificadas");
   await expect(page.getByRole("status")).toContainText("coma decimal");
-  await page.getByRole("button", { name: "Ver incidencias del proyecto" }).click();
-  await expect(page.getByRole("button", { name: "Incidencias · 2" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Revisar filas omitidas" }).click();
+  await expect(page.getByRole("button", { name: "Filas por revisar · 2" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("cell", { name: /12,5.*coma decimal/ })).toBeVisible();
   await page.getByRole("button", { name: "Detalle", exact: true }).click();
   await expect(page.getByText("No hay filas cuantificadas")).toBeVisible();
@@ -65,7 +65,7 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await page.getByLabel("Nombre de la actividad").fill("Hormigonar pilotes");
   await page.getByLabel("Código EDT").fill("1.1");
   await page.getByLabel("Fase 1").fill("Cimentación");
-  await page.getByText("Duración a partir de cantidades BIM (opcional)", { exact: true }).click();
+  await page.getByText("Calcular días con las cantidades de la tabla", { exact: true }).click();
   await page.getByLabel("Origen de la duración").selectOption({ index: 1 });
   await page.getByLabel("Rendimiento").fill("5");
   await page.getByRole("button", { name: "Guardar actividad" }).click();
@@ -188,6 +188,9 @@ test("Inventario sin volumen conserva la unidad de cada partida", async ({
     .getByRole("button", { name: "Ver cantidades consolidadas" })
     .click();
   const totals = page.getByLabel("Cantidades de la selección");
+  await expect(page.getByLabel("Familia", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Material", { exact: true })).toHaveCount(0);
+
   await expect(totals.getByText("8 m²", { exact: true })).toBeVisible();
   await expect(totals.getByText("3 m²", { exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Nivel", exact: true }).selectOption("N1");

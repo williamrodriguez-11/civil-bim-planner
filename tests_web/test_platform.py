@@ -112,6 +112,40 @@ class Workflow(unittest.TestCase):
             headers=self.headers(),
         )
 
+    def test_report_selected_tables_and_sheets(self):
+        ids = []
+        for name, value in [("uno.csv", 2), ("dos.csv", 4)]:
+            sid = self.load(name, f"N;V\nPB;{value}".encode())
+            self.mapping(
+                sid,
+                {
+                    "category": "Columnas",
+                    "mode": "direct",
+                    "decimal": ",",
+                    "fields": {"level": "N", "volume": "V"},
+                    "units": {"volume": "m³"},
+                    "direct_basis": "row_total",
+                },
+            ).raise_for_status()
+            ids.append(sid)
+        response = self.client.post(
+            self.base + "/reports",
+            headers=self.headers(),
+            json={"sections": ["Detalle"], "tables": [ids[0]]},
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        content = self.client.get(
+            self.base + "/reports/" + str(response.json()["id"])
+        ).content
+        book = load_workbook(BytesIO(content), data_only=True)
+        self.assertEqual(book.sheetnames, ["Detalle"])
+        self.assertEqual(book["Detalle"].max_row, 2)
+        self.assertIn(2, list(book["Detalle"].values)[1])
+        invalid = self.client.post(
+            self.base + "/reports", headers=self.headers(), json={"sections": []}
+        )
+        self.assertEqual(invalid.status_code, 422)
+
     def test_reference_project_and_archived_report(self):
         for category in ["Columnas", "Vigas", "Losas", "Muros"]:
             path = ROOT / "examples" / (category.lower() + ".csv")

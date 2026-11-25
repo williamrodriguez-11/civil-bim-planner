@@ -30,6 +30,32 @@ class Options(Input):
     trim: bool = False
 
 
+class ReportOptions(Input):
+    sections: list[
+        Literal[
+            "Proyecto",
+            "Resumen por nivel",
+            "Detalle",
+            "Incidencias",
+            "Configuración",
+            "Fuentes",
+            "Criterios",
+        ]
+    ] = Field(
+        default_factory=lambda: [
+            "Proyecto",
+            "Resumen por nivel",
+            "Detalle",
+            "Incidencias",
+            "Configuración",
+            "Fuentes",
+            "Criterios",
+        ],
+        min_length=1,
+    )
+    tables: list[int] | None = Field(None, min_length=1)
+
+
 class Mapping(Input):
     category: Name
     fields: dict[str, str]

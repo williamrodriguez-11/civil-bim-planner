@@ -38,7 +38,7 @@ test("Programa dependencias y compara el progreso a una fecha de seguimiento", a
   await modal.getByLabel("Fase 1").fill("Cimentación");
   await modal.getByLabel("Duración (días laborables)").fill("4");
   await expect(
-    modal.getByText(/no aumenta con el paso de los días/),
+    modal.getByText(/Registra el avance observado en obra/),
   ).toBeVisible();
   await modal.getByRole("button", { name: "25%", exact: true }).click();
   await page.screenshot({ path: info.outputPath("actividad.png") });

@@ -188,6 +188,19 @@ function ProjectForm({
 function Reports({ state, mutate }: { state: State; mutate: Mutation }) {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const sections = [
+    "Proyecto",
+    "Resumen por nivel",
+    "Detalle",
+    "Incidencias",
+    "Configuración",
+    "Fuentes",
+    "Criterios",
+  ];
+  const [chosen, setChosen] = useState(["Resumen por nivel", "Detalle"]);
+  const [tableIds, setTableIds] = useState(
+    state.tables.filter((t) => state.results[t.id]).map((t) => t.id),
+  );
   const url = "/api/projects/" + state.project.id + "/reports/";
   return (
     <section className="panel">
@@ -195,18 +208,65 @@ function Reports({ state, mutate }: { state: State; mutate: Mutation }) {
         <FileBarChart />
         <h2>Reportes de cuantificación</h2>
       </div>
-      <p>
-        El libro Excel conserva el resumen por nivel, detalle, incidencias,
-        configuración y fuentes de la revisión generada.
-      </p>
+      <p>Elige las tablas y las hojas que incluirá tu archivo Excel.</p>
+      <div className="report-options">
+        <fieldset>
+          <legend>Tablas del reporte</legend>
+          {state.tables.map((t) => (
+            <label className="check" key={t.id}>
+              <input
+                type="checkbox"
+                disabled={!state.results[t.id]}
+                checked={tableIds.includes(t.id)}
+                onChange={(e) =>
+                  setTableIds(
+                    e.target.checked
+                      ? [...tableIds, t.id]
+                      : tableIds.filter((id) => id !== t.id),
+                  )
+                }
+              />
+              {t.name}
+              {t.sheet && " · " + t.sheet}
+              {!state.results[t.id] && " · Pendiente de cálculo"}
+            </label>
+          ))}
+        </fieldset>
+        <fieldset>
+          <legend>Contenido del Excel</legend>
+          {sections.map((name) => (
+            <label className="check" key={name}>
+              <input
+                type="checkbox"
+                checked={chosen.includes(name)}
+                onChange={(e) =>
+                  setChosen(
+                    e.target.checked
+                      ? [...chosen, name]
+                      : chosen.filter((s) => s !== name),
+                  )
+                }
+              />
+              {name === "Incidencias"
+                ? "Filas por revisar y omitidas"
+                : name === "Fuentes"
+                  ? "Tablas originales"
+                  : name}
+            </label>
+          ))}
+        </fieldset>
+      </div>
       <button
         className="primary"
-        disabled={busy}
+        disabled={busy || !chosen.length || !tableIds.length}
         onClick={async () => {
           setBusy(true);
           setError("");
           try {
-            const { id } = await mutate("/reports", {});
+            const { id } = await mutate("/reports", {
+              sections: chosen,
+              tables: tableIds,
+            });
             const a = document.createElement("a");
             a.href = url + id;
             a.download = "";
@@ -242,7 +302,13 @@ function Reports({ state, mutate }: { state: State; mutate: Mutation }) {
     </section>
   );
 }
-function App({ username, logout }: { username: string; logout: () => Promise<void> }) {
+function App({
+  username,
+  logout,
+}: {
+  username: string;
+  logout: () => Promise<void>;
+}) {
   const selectionKey = "civil-project:" + username;
   const [catalog, setCatalog] = useState<Project[]>([]),
     [state, setState] = useState<State | null>(null),
@@ -293,8 +359,7 @@ function App({ username, logout }: { username: string; logout: () => Promise<voi
       const list = await api<Project[]>("/projects?include_deleted=true");
       setCatalog(list);
       const active = list.filter((p) => !p.deleted_at);
-      const id =
-        current.current || Number(localStorage.getItem(selectionKey));
+      const id = current.current || Number(localStorage.getItem(selectionKey));
       await load(active.some((p) => p.id === id) ? id : (active[0]?.id ?? 0));
     } catch (e) {
       setError(cleanError(e));
@@ -419,7 +484,11 @@ function App({ username, logout }: { username: string; logout: () => Promise<voi
           <div className="local">
             <i /> {username}
           </div>
-          <button onClick={() => logout().catch((e) => setError(cleanError(e)))}>Cerrar sesión</button>
+          <button
+            onClick={() => logout().catch((e) => setError(cleanError(e)))}
+          >
+            Cerrar sesión
+          </button>
           <button
             className="collapse"
             title="Plegar navegación"
@@ -676,5 +745,9 @@ function App({ username, logout }: { username: string; logout: () => Promise<voi
   );
 }
 createRoot(document.getElementById("root")!).render(
-  <Account>{(username, logout) => <App key={username} username={username} logout={logout} />}</Account>
+  <Account>
+    {(username, logout) => (
+      <App key={username} username={username} logout={logout} />
+    )}
+  </Account>,
 );

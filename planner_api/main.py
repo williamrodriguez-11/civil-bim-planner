@@ -26,7 +26,7 @@ from bim_planner.quantities import ISSUE_COLUMNS, QuantityConfig
 from .auth import Account, require_project
 from .auth import router as auth_router
 from .db import INTEGRITY_ERRORS, connect, initialize
-from .models import Mapping, Options, Plan, Project
+from .models import Mapping, Options, Plan, Project, ReportOptions
 from .planning import schedule
 from .project_xml import project_xml
 from . import social
@@ -492,7 +492,11 @@ def export_plan(pid: int):
 
 
 @project_routes.post("/reports", status_code=201)
-def report(pid: int, revision: int = Header(alias="If-Match")):
+def report(
+    pid: int,
+    options: ReportOptions = ReportOptions(),
+    revision: int = Header(alias="If-Match"),
+):
     with connect(True) as db:
         p = project(db, pid, revision)
         tables = list(
@@ -501,9 +505,18 @@ def report(pid: int, revision: int = Header(alias="If-Match")):
                 (pid,),
             )
         )
+        if options.tables is not None:
+            selected = set(options.tables)
+            if selected - {row["id"] for row in tables}:
+                raise ValueError(
+                    "Hay tablas seleccionadas que ya no están disponibles."
+                )
+            tables = [row for row in tables if row["id"] in selected]
         data = results(db, pid)
-        if not data or len(data) != len(tables):
-            raise ValueError("Configura todas las tablas antes de generar el reporte.")
+        if not tables or any(row["id"] not in data for row in tables):
+            raise ValueError(
+                "Calcula las tablas seleccionadas antes de generar el reporte."
+            )
         detail, issues, sources, configs = [], [], {}, []
         for row in tables:
             m = Mapping.model_validate_json(row["mapping"])
@@ -546,6 +559,7 @@ def report(pid: int, revision: int = Header(alias="If-Match")):
             pd.DataFrame(issues, columns=[*ISSUE_COLUMNS, "Fuente"]),
             configs,
             sources,
+            sections=options.sections,
             project_info={
                 "Proyecto": p["name"],
                 "Ubicación": p["location"],

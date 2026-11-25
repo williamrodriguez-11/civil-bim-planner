@@ -1,3 +1,4 @@
+import { reviewRow } from "./review";
 import { useState } from "react";
 import {
   Activity,
@@ -51,7 +52,8 @@ export function Overview({
     tables = state?.tables ?? [],
     tasks = state?.schedule ?? [],
     [groupBy, setGroupBy] = useState("Nivel"),
-    [selectedKey, setSelectedKey] = useState("");
+    [selectedKey, setSelectedKey] = useState(""),
+    [chartView, setChartView] = useState("Barras");
   const quantities = summarizeMeasurements(data);
   const selected =
     quantities.find((m) => m.key === selectedKey) ?? quantities[0];
@@ -82,7 +84,9 @@ export function Overview({
     (max, g) => Math.max(max, measurementTotal(g.measure) ?? 0),
     0,
   );
-  const errors = issues(state).filter((r) => r.Estado === "Rechazada").length,
+  const errors = issues(state).filter(
+      (r) => reviewRow(r).Estado === "Por corregir",
+    ).length,
     pending = tables.filter((s) => !s.mapping).length;
   const totalDays = tasks.reduce((n, t) => n + t.duration, 0);
   const stats = [
@@ -235,7 +239,49 @@ export function Overview({
               </button>
             ))}
           </div>
-          {sums.length ? (
+          <div className="tabs" aria-label="Vista de cantidades">
+            {["Barras", "Tabla", "Proporciones"].map((v) => (
+              <button
+                key={v}
+                aria-pressed={chartView === v}
+                onClick={() => setChartView(v)}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+          {sums.length && chartView === "Tabla" ? (
+            <Grid
+              rows={sums.map(({ name, measure }) => ({
+                [groupBy]: name,
+                Cantidad: measurementTotal(measure),
+                Unidad: unitLabel(measure.unit),
+              }))}
+            />
+          ) : sums.length && chartView === "Proporciones" ? (
+            <div className="proportions">
+              {sums.map(({ name, measure }) => {
+                const total = sums.reduce(
+                  (n, s) => n + (measurementTotal(s.measure) ?? 0),
+                  0,
+                );
+                const percent = total
+                  ? ((measurementTotal(measure) ?? 0) / total) * 100
+                  : 0;
+                return (
+                  <div key={name}>
+                    <label>
+                      {name}
+                      <strong>
+                        {fmt(percent)} % · {totalLabel(measure)}
+                      </strong>
+                    </label>
+                    <progress max={100} value={percent} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : sums.length ? (
             <div className="bars">
               {selected.measuredRows < selected.sourceRows && (
                 <small>
@@ -293,10 +339,41 @@ export function Overview({
           )}
         </section>
       </div>
+      {!!tasks.length && (
+        <section className="panel">
+          <div className="section-title">
+            <CalendarDays />
+            <h2>Seguimiento de actividades</h2>
+          </div>
+          <div className="measure-totals">
+            <div>
+              <small>Terminadas</small>
+              <strong>{tasks.filter((t) => t.progress === 100).length}</strong>
+            </div>
+            <div>
+              <small>En ejecución</small>
+              <strong>
+                {tasks.filter((t) => t.progress > 0 && t.progress < 100).length}
+              </strong>
+            </div>
+            <div>
+              <small>Por iniciar</small>
+              <strong>{tasks.filter((t) => t.progress === 0).length}</strong>
+            </div>
+            <div>
+              <small>En ruta crítica</small>
+              <strong>{tasks.filter((t) => t.critical).length}</strong>
+            </div>
+          </div>
+          <button onClick={() => go("Programación")}>
+            Ver cronograma <ArrowRight size={14} />
+          </button>
+        </section>
+      )}
       {(pending > 0 || errors > 0) && (
         <div className="notice">
           <b>Revisión pendiente</b> · {pending} tablas por configurar · {errors}{" "}
-          filas rechazadas{" "}
+          filas por corregir{" "}
           <button
             onClick={() => go(pending ? "Tablas de origen" : "Cuantificación")}
           >
@@ -315,7 +392,7 @@ export function Quantities({
   initialTab?: QuantityTab;
 }) {
   const all = details(state);
-  const exceptions = issues(state);
+  const exceptions = issues(state).map(reviewRow);
   const [filters, setFilters] = useState<Record<string, string>>({}),
     [tab, setTab] = useState<QuantityTab>(
       initialTab ??
@@ -325,12 +402,24 @@ export function Quantities({
   const filtered = all.filter((r) =>
     Object.entries(filters).every(([k, v]) => !v || r[k] === v),
   );
+  const available = [
+    "Categoría",
+    "Nivel",
+    "Familia",
+    "Tipo",
+    "Material",
+    "Resistencia",
+  ].filter((key) => all.some((row) => String(row[key] ?? "").trim()));
+  const groupKey = available.includes(group)
+    ? group
+    : (available[0] ?? "Nivel");
   const measures = ["Volumen (m³)", "Longitud (m)", "Masa (kg)"];
-  if (group === "Categoría" || filters["Categoría"]) measures.push("Área (m²)");
+  if (groupKey === "Categoría" || filters["Categoría"])
+    measures.push("Área (m²)");
   const map = new Map<string, Row>();
   for (const r of filtered) {
-    const k = String(r[group] || "Sin asignar"),
-      v = map.get(k) ?? { [group]: k, Elementos: 0 };
+    const k = String(r[groupKey] || "Sin asignar"),
+      v = map.get(k) ?? { [groupKey]: k, Elementos: 0 };
     v.Elementos = Number(v.Elementos) + Number(r.Elementos);
     for (const key of measures) {
       if (key === "Área (m²)" && (r[key] == null || v[key] === null))
@@ -350,13 +439,20 @@ export function Quantities({
       <div className="tabs">
         {(["Resumen", "Detalle", "Incidencias"] as const).map((k) => (
           <button key={k} aria-pressed={k === tab} onClick={() => setTab(k)}>
-            {k}
+            {k === "Incidencias" ? "Filas por revisar" : k}
             {k === "Incidencias" ? " · " + exceptions.length : ""}
           </button>
         ))}
       </div>
       {tab === "Incidencias" ? (
-        <Grid rows={exceptions} />
+        <div>
+          <p className="field-help">
+            Estas filas quedaron fuera de las cantidades. Los totales se omiten
+            porque sus elementos ya están contados. Las filas “Por corregir”
+            necesitan revisar sus datos o configuración.
+          </p>
+          <Grid rows={exceptions} />
+        </div>
       ) : !all.length ? (
         <Empty
           title={
@@ -375,15 +471,8 @@ export function Quantities({
         </Empty>
       ) : (
         <>
-          <div className="form-grid">
-            {[
-              "Categoría",
-              "Nivel",
-              "Familia",
-              "Tipo",
-              "Material",
-              "Resistencia",
-            ].map((k) => (
+          <div className="form-grid quantity-filters">
+            {available.map((k) => (
               <label key={k}>
                 {k}
                 <select
@@ -425,9 +514,12 @@ export function Quantities({
             </dl>
           )}
           {tab === "Resumen" && (
-            <label>
+            <label className="quantity-group">
               Agrupar mediciones por
-              <select value={group} onChange={(e) => setGroup(e.target.value)}>
+              <select
+                value={groupKey}
+                onChange={(e) => setGroup(e.target.value)}
+              >
                 {[
                   "Nivel",
                   "Categoría",

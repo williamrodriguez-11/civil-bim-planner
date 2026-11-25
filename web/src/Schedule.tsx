@@ -16,7 +16,12 @@ import {
   type Mutation,
 } from "./model";
 import { Modal, Empty } from "./shared";
-import { availableMeasures, unitLabel } from "./measurements";
+import {
+  availableMeasures,
+  unitLabel,
+  summarizeMeasurements,
+  measurementTotal,
+} from "./measurements";
 
 const relations: Record<
   string,
@@ -60,6 +65,7 @@ function Calendar({
   return (
     <Modal title="Calendario y seguimiento" close={close}>
       <form
+        className="calendar-form"
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
@@ -73,38 +79,39 @@ function Calendar({
           }
         }}
       >
-        <label>
-          Inicio del proyecto
-          <input
-            type="date"
-            required
-            value={draftPlan.start}
-            onChange={(e) =>
-              setDraftPlan({ ...draftPlan, start: e.target.value })
-            }
-          />
-        </label>
-        <label>
-          Fecha de seguimiento (opcional)
-          <input
-            type="date"
-            value={draftPlan.status_date ?? ""}
-            onChange={(e) =>
-              setDraftPlan({
-                ...draftPlan,
-                status_date: e.target.value || null,
-              })
-            }
-            aria-describedby="status-date-help"
-          />
-        </label>
+        <div className="calendar-dates">
+          <label>
+            Inicio del proyecto
+            <input
+              type="date"
+              required
+              value={draftPlan.start}
+              onChange={(e) =>
+                setDraftPlan({ ...draftPlan, start: e.target.value })
+              }
+            />
+          </label>
+          <label>
+            Fecha de seguimiento (opcional)
+            <input
+              type="date"
+              value={draftPlan.status_date ?? ""}
+              onChange={(e) =>
+                setDraftPlan({
+                  ...draftPlan,
+                  status_date: e.target.value || null,
+                })
+              }
+              aria-describedby="status-date-help"
+            />
+          </label>
+        </div>
         <p id="status-date-help" className="field-help">
-          Fecha de corte para calcular el % previsto. Vacía: se usa hoy. El %
-          completado lo registras tú; cambiar esta fecha no modifica las fechas
-          de las actividades.
+          Elige hasta qué día quieres evaluar el avance previsto. Puedes dejar
+          la fecha de seguimiento vacía para consultar el avance a hoy.
         </p>
         <h3>Días de trabajo</h3>
-        <div className="chips">
+        <div className="weekdays">
           {["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"].map((d, i) => (
             <button
               type="button"
@@ -123,32 +130,35 @@ function Calendar({
             </button>
           ))}
         </div>
-        <label>
-          Fecha no laborable
-          <input
-            type="date"
-            value={holiday}
-            onChange={(e) => setHoliday(e.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          disabled={!holiday}
-          onClick={() => {
-            setDraftPlan({
-              ...draftPlan,
-              holidays: [...new Set([...draftPlan.holidays, holiday])].sort(),
-            });
-            setHoliday("");
-          }}
-        >
-          Añadir fecha
-        </button>
+        <div className="holiday-entry">
+          <label>
+            Fecha no laborable
+            <input
+              type="date"
+              value={holiday}
+              onChange={(e) => setHoliday(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!holiday}
+            onClick={() => {
+              setDraftPlan({
+                ...draftPlan,
+                holidays: [...new Set([...draftPlan.holidays, holiday])].sort(),
+              });
+              setHoliday("");
+            }}
+          >
+            Añadir fecha
+          </button>
+        </div>
         <div className="chips">
           {draftPlan.holidays.map((d) => (
             <button
               type="button"
               key={d}
+              aria-label={"Quitar fecha " + d}
               onClick={() =>
                 setDraftPlan({
                   ...draftPlan,
@@ -156,7 +166,7 @@ function Calendar({
                 })
               }
             >
-              {d}
+              {dateLabel(d)}
               <X size={12} />
             </button>
           ))}
@@ -189,6 +199,19 @@ function Editor({
     [busy, setBusy] = useState(false);
   const patch = (p: Partial<Task>) => setTask({ ...task, ...p });
   const scheduled = state.schedule.find((t) => t.id === task.id);
+  const linkedRows = task.quantity
+    ? (state.results[task.quantity.table]?.detail ?? []).filter(
+        (r) =>
+          (!task.quantity!.level || r.Nivel === task.quantity!.level) &&
+          (!task.quantity!.category || r.Categoría === task.quantity!.category),
+      )
+    : [];
+  const linkedMeasures = summarizeMeasurements(linkedRows).filter(
+    (m) => m.unit === task.quantity?.unit,
+  );
+  const linkedTotal =
+    linkedMeasures.length === 1 ? measurementTotal(linkedMeasures[0]) : null;
+
   return (
     <Modal
       className="task-editor"
@@ -283,23 +306,33 @@ function Editor({
         </fieldset>
         <fieldset className="task-section">
           <legend>2. Seguimiento de la ejecución</legend>
-          <label>
-            % completado
+          <div className="progress-editor">
             <input
-              aria-describedby="progress-help"
-              type="number"
+              type="range"
+              aria-label="Avance realizado"
               min="0"
               max="100"
-              step="any"
-              required
+              step="1"
               value={task.progress}
-              onChange={(e) => patch({ progress: +e.target.value })}
+              onChange={(e) => patch({ progress: Number(e.target.value) })}
             />
-          </label>
+            <label>
+              % completado
+              <input
+                aria-describedby="progress-help"
+                type="number"
+                min="0"
+                max="100"
+                step="any"
+                required
+                value={task.progress}
+                onChange={(e) => patch({ progress: +e.target.value })}
+              />
+            </label>
+          </div>
           <p id="progress-help" className="field-help">
-            Registra cuánto has completado de la actividad: 0% sin iniciar, 50%
-            a la mitad y 100% terminada. Este dato se actualiza manualmente; no
-            aumenta con el paso de los días.
+            Registra el avance observado en obra. 0% significa sin iniciar y
+            100% significa terminada.
           </p>
           <div className="chips" aria-label="Registrar porcentaje completado">
             {[0, 25, 50, 75, 100].map((n) => (
@@ -384,10 +417,10 @@ function Editor({
           </p>
         </details>
         <details className="task-section" open={!!initial.quantity}>
-          <summary>Duración a partir de cantidades BIM (opcional)</summary>
+          <summary>Calcular días con las cantidades de la tabla</summary>
           <p className="field-help">
-            Puedes escribir los días de duración o calcularlos con una tabla
-            cuantificada y el rendimiento diario de la cuadrilla.
+            Selecciona una tabla y cuánta obra realiza la cuadrilla cada día.
+            Por ejemplo, 30 m³ a 5 m³ por día requieren 6 días laborables.
           </p>
           <label>
             Origen de la duración
@@ -418,6 +451,16 @@ function Editor({
                 ))}
             </select>
           </label>
+          {task.quantity && linkedTotal !== null && task.quantity.rate > 0 && (
+            <p className="notice">
+              {fmt(linkedTotal)} {unitLabel(task.quantity.unit)} ÷{" "}
+              {fmt(task.quantity.rate)} {unitLabel(task.quantity.unit)}/día ={" "}
+              <strong>
+                {Math.ceil(linkedTotal / task.quantity.rate)} días laborables
+              </strong>
+              .
+            </p>
+          )}
           {task.quantity && (
             <div className="form-grid">
               <label>

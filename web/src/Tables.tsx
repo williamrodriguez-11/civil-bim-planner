@@ -350,7 +350,11 @@ function Configure({
           : "direct",
       fields,
       units: {},
-      decimal: ",",
+      decimal: table.rows.some(row => Object.entries(fields).some(([key, column]) =>
+        !["level", "type", "id"].includes(key) && /^\d+\.\d{1,2}(?:\s|$)/.test(String(row[column] ?? ""))))
+        && !table.rows.some(row => Object.entries(fields).some(([key, column]) =>
+        !["level", "type", "id"].includes(key) && /^\d+,\d{1,2}(?:\s|$)/.test(String(row[column] ?? ""))))
+        ? "." : ",",
       direct_basis: "row_total",
       excluded_rows: [],
       filter_column: null,
@@ -368,7 +372,8 @@ function Configure({
       (source.mapping?.excluded_rows ?? []).join(", "),
     ),
     [message, setMessage] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [advanced, setAdvanced] = useState(false);
   const change = (v: Partial<Mapping>) => {
     setMapping({ ...mapping, ...v });
     setMessage("");
@@ -439,7 +444,7 @@ function Configure({
     <section className="subsection">
       <div className="section-title">
         <SlidersHorizontal />
-        <h3>Clasificación y mediciones</h3>
+        <h3>Preparar cantidades de esta tabla</h3>
       </div>
       {!!Object.keys(state.templates).length && (
         <label>
@@ -464,12 +469,17 @@ function Configure({
           </select>
         </label>
       )}
-      <div className="form-grid">
+      <p className="field-help">
+        Indica qué elementos contiene la tabla y elige las columnas que aportan
+        sus medidas. Cada selector muestra los encabezados de tu archivo.
+      </p>
+      <h4>Qué estás midiendo</h4><p className="field-help">Categoría es el nombre del elemento, por ejemplo Columnas. Nivel es el piso donde está ubicado.</p>
+      <div className="form-grid mapping-grid">
         <label>
           Categoría
           <input
             list="categories"
-            placeholder="Ej. Zapatas"
+            placeholder="Ej. Columnas, Vigas, Tuberías"
             value={mapping.category}
             onChange={(e) =>
               change({
@@ -521,27 +531,32 @@ function Configure({
             value={mapping.decimal}
             onChange={(e) => change({ decimal: e.target.value })}
           >
-            <option value=",">Coma decimal</option>
-            <option value=".">Punto decimal</option>
+            <option value=",">Coma decimal · 0,34</option>
+            <option value=".">Punto decimal · 0.34</option>
           </select>
         </label>
-        {mapping.mode !== "dimensions" && (
-          <label>
-            Categoría desde una columna (opcional)
-            {select(mapping.category_field ?? "", (value) =>
-              change({ category_field: value }),
-            )}
-          </label>
-        )}
-        {mapping.mode !== "dimensions" && (
+        {mapping.mode !== "dimensions" &&
+          (advanced || !!mapping.category_field) && (
+            <label>
+              Categoría desde una columna (opcional)
+              {select(mapping.category_field ?? "", (value) =>
+                change({ category_field: value }),
+              )}
+            </label>
+          )}
+        {mapping.mode !== "dimensions" && (advanced || !!mapping.fields.count) && (
           <label>
             Base de medición
             <select
               value={mapping.direct_basis}
               onChange={(e) => change({ direct_basis: e.target.value })}
             >
-              <option value="row_total">Total de cada fila</option>
-              <option value="per_element">Medición por elemento</option>
+              <option value="row_total">
+                La medida ya es el total de la fila
+              </option>
+              <option value="per_element">
+                Multiplicar la medida por la cantidad
+              </option>
             </select>
           </label>
         )}
@@ -554,49 +569,87 @@ function Configure({
             : "Las dimensiones son por elemento. La geometría rectangular se multiplica por la cantidad, sin descontar huecos."}{" "}
         Confirma cada unidad de origen.
       </p>
-      <div className="form-grid">
-        {active.map((k) => (
-          <label key={k}>
-            {fieldNames[k]}
-            {select(
-              mapping.fields[k] ?? "",
-              (val) => change({ fields: { ...mapping.fields, [k]: val } }),
-              fieldNames[k],
-            )}
-            {mapping.fields[k] &&
-              !["level", "type", "id", "count"].includes(k) && (
-                <select
-                  aria-label={"Unidad de " + fieldNames[k]}
-                  value={mapping.units[k] ?? ""}
-                  onChange={(e) =>
-                    change({ units: { ...mapping.units, [k]: e.target.value } })
-                  }
-                >
-                  <option value="">Confirmar unidad…</option>
-                  {(k === "mass"
-                    ? ["kg", "g", "t", "lb"]
-                    : ["m", "cm", "mm", "ft"]
-                  )
-                    .map(
-                      (u) =>
-                        u + (k === "area" ? "²" : k === "volume" ? "³" : ""),
-                    )
-                    .map((u) => (
-                      <option key={u} value={u}>
-                        {k === "length" && u === "m" ? "m (metro lineal)" : u}
-                      </option>
-                    ))}
-                </select>
+      {mapping.category_field &&
+        mapping.category_field === mapping.fields.level && (
+          <p className="error">
+            Estás usando la misma columna para categoría y nivel. Si todos los
+            elementos son columnas o vigas, deja “Categoría desde una columna”
+            en “Sin asignar” y escribe la categoría arriba.
+          </p>
+        )}
+      <h4>Columnas que se usarán en el cálculo</h4>
+      <div className="form-grid mapping-grid">
+        {active
+          .filter(
+            (k) =>
+              advanced ||
+              mapping.fields[k] ||
+              k === "level" ||
+              (k === "volume" && mapping.mode === "direct") ||
+              (mapping.mode === "dimensions" &&
+                dimensions[mapping.category]?.includes(k)),
+          )
+          .map((k) => (
+            <label key={k}>
+              {fieldNames[k]}
+              {select(
+                mapping.fields[k] ?? "",
+                (val) => change({ fields: { ...mapping.fields, [k]: val } }),
+                fieldNames[k],
               )}
-          </label>
-        ))}
-        {(["family", "material", "strength"] as const).map((k, i) => (
-          <label key={k}>
-            {["Familia", "Material", "Resistencia"][i]}
-            {select(mapping[k], (val) => change({ [k]: val }))}
-          </label>
-        ))}
+              {mapping.fields[k] && <small className="field-help">
+                Ejemplo · {String(table.rows.find(row => String(row[mapping.fields[k]] ?? "").trim())?.[mapping.fields[k]] ?? "")}
+              </small>}
+
+              {mapping.fields[k] &&
+                !["level", "type", "id", "count"].includes(k) && (
+                  <select
+                    aria-label={"Unidad de " + fieldNames[k]}
+                    value={mapping.units[k] ?? ""}
+                    onChange={(e) =>
+                      change({
+                        units: { ...mapping.units, [k]: e.target.value },
+                      })
+                    }
+                  >
+                    <option value="">Confirmar unidad…</option>
+                    {(k === "mass"
+                      ? ["kg", "g", "t", "lb"]
+                      : ["m", "cm", "mm", "ft"]
+                    )
+                      .map(
+                        (u) =>
+                          u + (k === "area" ? "²" : k === "volume" ? "³" : ""),
+                      )
+                      .map((u) => (
+                        <option key={u} value={u}>
+                          {k === "length" && u === "m" ? "m (metro lineal)" : u}
+                        </option>
+                      ))}
+                  </select>
+                )}
+            </label>
+          ))}
+        {(["family", "material", "strength"] as const)
+          .filter((k) => advanced || mapping[k])
+          .map((k, i) => (
+            <label key={k}>
+              {["Familia", "Material", "Resistencia"][i]}
+              {select(mapping[k], (val) => change({ [k]: val }))}
+            </label>
+          ))}
       </div>
+      <button
+        className="secondary"
+        aria-expanded={advanced}
+        onClick={() => setAdvanced(!advanced)}
+      >
+        {advanced ? "Ocultar campos opcionales" : "Añadir otra medición o dato"}
+      </button>
+      <p className="field-help">
+        Usa los campos opcionales para cantidad, área, longitud, peso, familia o
+        material cuando tu tabla contenga esos datos.
+      </p>
       <details>
         <summary>Filtros, exclusiones y plantilla</summary>
         <div className="form-grid">
@@ -682,8 +735,8 @@ function Configure({
         <div className={saved.detail.length ? "notice" : "error"}>
           <p role="status">
             {saved.detail.length
-              ? `Cuantificación guardada. Filas cuantificadas: ${saved.detail.length}. Incidencias: ${saved.issues.length}.`
-              : `Último cálculo guardado sin filas cuantificadas. Incidencias: ${saved.issues.length}. ${saved.issues[0]?.Motivo ?? ""}`}
+              ? `Cuantificación guardada. Filas cuantificadas: ${saved.detail.length}. Filas fuera del cálculo: ${saved.issues.length}.`
+              : `Último cálculo guardado sin filas cuantificadas. Filas fuera del cálculo: ${saved.issues.length}. ${saved.issues[0]?.Motivo ?? ""}`}
           </p>
           <div className="tools">
             {!!saved.detail.length && (
@@ -693,7 +746,7 @@ function Configure({
             )}
             {!!saved.issues.length && (
               <button onClick={() => viewQuantities("Incidencias")}>
-                Ver incidencias del proyecto
+                Revisar filas omitidas
               </button>
             )}
           </div>
