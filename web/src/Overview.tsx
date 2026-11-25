@@ -17,12 +17,15 @@ import {
   cleanError,
   dateLabel,
   details,
+  elementFromName,
   fmt,
   issues,
+  levelsAsCategories,
   type Mutation,
   type Page,
   type QuantityTab,
   type Row,
+  type Source,
   type State,
 } from "./model";
 import { Empty, Grid } from "./shared";
@@ -40,16 +43,72 @@ function totalLabel(measure: Measurement) {
     ? "Área incompleta"
     : fmt(total) + " " + unitLabel(measure.unit);
 }
+function LevelCategoryFix({
+  source,
+  levels,
+  mutate,
+}: {
+  source: Source;
+  levels: string[];
+  mutate: Mutation;
+}) {
+  const [category, setCategory] = useState(
+      elementFromName(source.name, source.sheet),
+    ),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const mapping = source.mapping!;
+  return (
+    <div className="notice level-fix" role="status">
+      <p>
+        La tabla <strong>«{source.name}»</strong> está usando los niveles
+        {levels.length ? ` (${levels.slice(0, 3).join(", ")}${levels.length > 3 ? "…" : ""})` : ""}{" "}
+        como si fueran categorías. Indica qué elemento contiene la tabla:
+      </p>
+      <div className="tools">
+        <input
+          aria-label={"Categoría de " + source.name}
+          placeholder="Ej. Columnas"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+        />
+        <button
+          className="primary"
+          disabled={busy || !category.trim()}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await mutate(
+                "/tables/" + source.id + "/mapping",
+                { ...mapping, category: category.trim(), category_field: "" },
+                "PUT",
+              );
+            } catch (e) {
+              setError(cleanError(e));
+              setBusy(false);
+            }
+          }}
+        >
+          Clasificar toda la tabla como {category.trim() || "…"}
+        </button>
+      </div>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
 export function Overview({
   state,
   projects,
   go,
   create,
+  mutate,
 }: {
   state: State | null;
   projects: number;
   go: (p: Page) => void;
   create: () => void;
+  mutate: Mutation;
 }) {
   const data = details(state),
     tables = state?.tables ?? [],
@@ -168,6 +227,20 @@ export function Overview({
         </div>
         <Blueprint />
       </div>
+      {levelsAsCategories(state).map((source) => (
+        <LevelCategoryFix
+          key={source.id}
+          source={source}
+          levels={[
+            ...new Set(
+              (state?.results[source.id]?.detail ?? []).map((r) =>
+                String(r.Nivel),
+              ),
+            ),
+          ]}
+          mutate={mutate}
+        />
+      ))}
       <div className="section-title outside">
         <h2>Indicadores del proyecto</h2>
         <small className="right">

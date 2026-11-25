@@ -207,6 +207,19 @@ def calculate(frame, mapping: Mapping, name):
             raise ValueError(
                 "La clasificación por columna requiere un campo existente y mediciones de origen."
             )
+        level = mapping.fields.get("level")
+        if level and level in frame:
+            pairs = [
+                (str(c).strip(), str(n).strip())
+                for c, n in zip(frame[mapping.category_field], frame[level])
+                if str(c).strip()
+            ]
+            if pairs and all(c == n for c, n in pairs):
+                raise ValueError(
+                    f"La columna «{mapping.category_field}» contiene los niveles, no el tipo "
+                    "de elemento. Deja «Categoría desde una columna» sin asignar y escribe "
+                    "la categoría de la tabla, por ejemplo Columnas."
+                )
         parts = []
         for category, subset in frame.groupby(
             frame[mapping.category_field].map(lambda value: str(value).strip()),

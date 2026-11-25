@@ -610,6 +610,36 @@ def revise_options(
         return {"id": sid}
 
 
+def carry_archived_issues(db, sid, issues):
+    """Keep archived issues archived when only their category label changed.
+
+    Correcting a table's category (for example, levels used as categories)
+    must not send the incidences the user already reviewed back to review.
+    """
+    def key(row):
+        return issue_snapshot({k: v for k, v in row.items() if k != "Categoría"})
+
+    current = {key(row): issue_snapshot(row) for row in issues}
+    for record in list(
+        db.execute(
+            "SELECT digest, issue, archived_at FROM issue_archive WHERE source=?",
+            (sid,),
+        )
+    ):
+        snapshot = current.get(key(json.loads(record["issue"])))
+        if snapshot is None or snapshot == record["issue"]:
+            continue
+        db.execute(
+            "DELETE FROM issue_archive WHERE source=? AND digest=?",
+            (sid, record["digest"]),
+        )
+        db.execute(
+            "INSERT INTO issue_archive(source,digest,issue,archived_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(source,digest) DO NOTHING",
+            (sid, sha256(snapshot.encode()).hexdigest(), snapshot, record["archived_at"]),
+        )
+
+
 def validate_result(db, p, sid, result):
     data = results(db, p["id"])
     other_ids = {
@@ -650,6 +680,7 @@ def assign(
             "UPDATE source SET mapping=?,result=? WHERE id=?",
             (m.model_dump_json(), json.dumps(result, allow_nan=False), sid),
         )
+        carry_archived_issues(db, sid, result["issues"])
         if template.strip():
             db.execute(
                 "INSERT INTO template VALUES(?,?,?) ON CONFLICT(project,name) DO UPDATE SET mapping=excluded.mapping",

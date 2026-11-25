@@ -1283,3 +1283,18 @@ button.danger:hover {
   flex: 1 1 220px;
   max-width: 340px;
 }
+.level-fix {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 18px;
+  color: var(--ink);
+}
+.level-fix .tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.level-fix input {
+  flex: 1 1 180px;
+  max-width: 260px;
+}
