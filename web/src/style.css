@@ -1271,3 +1271,15 @@ button.danger:hover {
 .report button {
   margin-left: 4px;
 }
+.category-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 0 14px;
+  font-weight: 560;
+}
+.category-filter select {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
