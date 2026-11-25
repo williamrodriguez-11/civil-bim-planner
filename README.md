@@ -21,16 +21,32 @@ GitHub (rama main)  →  Render (servicio web con Docker)  →  Neon (PostgreSQL
 | Variable | Obligatoria | Valor |
 | --- | --- | --- |
 | `DATABASE_URL` | Sí | Cadena de conexión **agrupada** (pooled) de Neon. Si falta, la app usaría SQLite dentro del contenedor y los datos se perderían en cada despliegue. |
+| `CIVIL_BIM_ADMIN` | No | Tu nombre de usuario. Esa cuenta ve en **Proyectos** cuánto ocupa la base de datos compartida respecto del límite del plan. |
+| `CIVIL_BIM_STORAGE_LIMIT_MB` | No | Límite de almacenamiento del plan de la base, en MB. Por defecto 512 (Neon Free). Cámbialo si amplías el plan. |
 | `CIVIL_BIM_HOST` | No | Dominio público, solo si usas un dominio propio. Render ya informa `RENDER_EXTERNAL_HOSTNAME` automáticamente. |
+| `CIVIL_BIM_DB_POOL` | No | Conexiones abiertas como máximo hacia la base. Por defecto 5. |
 
 El `Dockerfile` ya configura Uvicorn para confiar en el proxy de Render (`--proxy-headers` y `FORWARDED_ALLOW_IPS`), de modo que cada visitante se identifica por su propia dirección.
 
 No hace falta un disco persistente en Render: con `DATABASE_URL` definido, todo se guarda en Neon.
 
+La app reutiliza hasta cinco conexiones con Neon en lugar de abrir una por consulta. Las que quedan sin uso se cierran a los cuatro minutos, para que Neon pueda suspenderse cuando nadie usa la página. Conviene que el servicio de Render y la base de Neon estén en la misma región.
+
 ### Límites del plan gratuito
 
 - **Render Free** suspende el servicio tras unos 15 minutos sin visitas. La siguiente visita tarda alrededor de un minuto en responder mientras se reactiva. La memoria es de 512 MB, por eso la app limita a dos los cálculos de contraseña simultáneos.
-- **Neon Free** ofrece 0,5 GB de almacenamiento y suspende la base cuando no se usa; la primera consulta tras la pausa tarda un poco más. Los archivos importados (hasta 16 MiB cada uno) y los reportes Excel se guardan dentro de la base, así que son lo que más espacio ocupa. Los elementos enviados a la papelera siguen ocupando espacio.
+- **Neon Free** ofrece 0,5 GB de almacenamiento compartido por todos los usuarios y suspende la base cuando no se usa; la primera consulta tras la pausa tarda un poco más. Los archivos importados (hasta 16 MiB cada uno) y los reportes Excel se guardan dentro de la base, así que son lo que más espacio ocupa.
+
+### Espacio de almacenamiento
+
+No hay cuota por usuario: nadie queda bloqueado mientras quede espacio en la base. Para que no se llene:
+
+- **Proyectos** muestra cuánto ocupan los proyectos de cada cuenta, sus reportes y su papelera.
+- Las papeleras de proyectos y de tablas permiten **Eliminar definitivamente** un elemento o **Vaciar papelera**. Hasta entonces, lo enviado a la papelera sigue ocupando espacio. Eliminar no se puede deshacer.
+- Cada reporte del historial se puede eliminar; las tablas y cantidades no cambian.
+- Cuando la base supera el 70 % de `CIVIL_BIM_STORAGE_LIMIT_MB`, el servidor escribe un aviso en el registro de Render («La base de datos usa…») al arrancar, al importar y al generar reportes. La cuenta de `CIVIL_BIM_ADMIN` ve además la barra en rojo.
+
+Si el aviso aparece aunque las papeleras estén vacías, amplía el plan de Neon y ajusta `CIVIL_BIM_STORAGE_LIMIT_MB`, o traslada los archivos a un almacenamiento de objetos.
 
 ## Cuentas y seguridad
 
@@ -137,7 +153,7 @@ npm.cmd run build
 ```
 
 - `tests/`: importación, formatos regionales, unidades, geometrías, exclusiones, duplicados y exportación.
-- `tests_web/`: API, cuentas y aislamiento entre ellas, límites de acceso, papelera, reportes, cronograma y XML. Usan bases SQLite sintéticas.
+- `tests_web/`: API, cuentas y aislamiento entre ellas, límites de acceso, papelera y eliminación definitiva, espacio usado, reportes, cronograma y XML. Usan bases SQLite sintéticas.
 - `web/e2e/`: recorridos en navegador con Playwright.
 
 El XML se validó con el XSD del SDK de Microsoft Project y con MPXJ 16.10.0. Queda pendiente abrirlo directamente en Microsoft Project de escritorio.

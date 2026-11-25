@@ -834,7 +834,10 @@ export function Tables({
     [error, setError] = useState("");
   type TableRef = Pick<Source, "id" | "name" | "sheet">;
   const [dialog, setDialog] = useState<
-      { kind: "delete"; target: TableRef } | { kind: "trash" } | null
+      | { kind: "delete"; target: TableRef }
+      | { kind: "trash" }
+      | { kind: "purge"; targets: TableRef[] }
+      | null
     >(null),
     [pending, setPending] = useState(false),
     [actionError, setActionError] = useState(""),
@@ -874,6 +877,32 @@ export function Tables({
       );
     } catch (e) {
       setActionError(cleanError(e));
+    } finally {
+      setPending(false);
+    }
+  }
+  async function purge(targets: TableRef[]) {
+    setPending(true);
+    setActionError("");
+    setNotice("");
+    let done = 0;
+    try {
+      for (const target of targets) {
+        await mutate("/tables/" + target.id + "/permanent", {}, "DELETE");
+        done++;
+      }
+      setDialog(null);
+      setNotice(
+        targets.length === 1
+          ? `Se eliminó definitivamente «${label(targets[0])}».`
+          : `Se eliminaron definitivamente ${targets.length} tablas.`,
+      );
+    } catch (e) {
+      setActionError(
+        (done ? `Se eliminaron ${done} de ${targets.length}. ` : "") +
+          cleanError(e),
+      );
+      setDialog({ kind: "trash" });
     } finally {
       setPending(false);
     }
@@ -1029,7 +1058,11 @@ export function Tables({
       {dialog && (
         <Modal
           title={
-            dialog.kind === "trash" ? "Papelera de tablas" : "Borrar tabla"
+            dialog.kind === "trash"
+              ? "Papelera de tablas"
+              : dialog.kind === "purge"
+                ? "Eliminar definitivamente"
+                : "Borrar tabla"
           }
           close={closeDialog}
         >
@@ -1053,15 +1086,84 @@ export function Tables({
                 </button>
               </div>
             </>
-          ) : (
-            state.trashed_tables.map((s) => (
-              <div key={s.id} className="report">
-                <span>{label(s)}</span>
-                <button disabled={pending} onClick={() => changeTrash(s, true)}>
-                  <Undo2 size={15} /> Restaurar
+          ) : dialog.kind === "purge" ? (
+            <>
+              <p>
+                {dialog.targets.length === 1 ? (
+                  <>
+                    ¿Eliminar <strong>«{label(dialog.targets[0])}»</strong> para
+                    siempre?
+                  </>
+                ) : (
+                  <>
+                    ¿Eliminar para siempre las {dialog.targets.length} tablas de
+                    la papelera?
+                  </>
+                )}{" "}
+                Se borrarán el archivo original, su configuración y sus
+                cantidades. Los reportes ya generados se conservan.{" "}
+                <strong>No se puede deshacer.</strong>
+              </p>
+              <div className="actions">
+                <button
+                  autoFocus
+                  disabled={pending}
+                  onClick={() => setDialog({ kind: "trash" })}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="danger"
+                  disabled={pending}
+                  onClick={() => purge(dialog.targets)}
+                >
+                  Eliminar definitivamente
                 </button>
               </div>
-            ))
+            </>
+          ) : (
+            <>
+              {state.trashed_tables.map((s) => (
+                <div key={s.id} className="report">
+                  <span>{label(s)}</span>
+                  <button
+                    disabled={pending}
+                    onClick={() => changeTrash(s, true)}
+                  >
+                    <Undo2 size={15} /> Restaurar
+                  </button>
+                  <button
+                    disabled={pending}
+                    aria-label={`Eliminar definitivamente ${label(s)}`}
+                    title="Eliminar definitivamente"
+                    onClick={() => {
+                      setActionError("");
+                      setDialog({ kind: "purge", targets: [s] });
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+              {state.trashed_tables.length ? (
+                <div className="actions">
+                  <button
+                    disabled={pending}
+                    onClick={() => {
+                      setActionError("");
+                      setDialog({
+                        kind: "purge",
+                        targets: state.trashed_tables,
+                      });
+                    }}
+                  >
+                    <Trash2 size={15} /> Vaciar papelera de tablas
+                  </button>
+                </div>
+              ) : (
+                <Empty title="La papelera de tablas está vacía" />
+              )}
+            </>
           )}
           {actionError && (
             <p className="error" role="alert">

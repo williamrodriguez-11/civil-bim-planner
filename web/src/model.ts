@@ -154,3 +154,15 @@ export const issues = (s: State | null) =>
     s?.issue_review?.[Number(id)]?.pending.map((index) => result.issues[index]) ??
     result.issues,
   );
+export interface Usage {
+  total: number;
+  trash: number;
+  reports: number;
+  projects: Record<string, number>;
+  database?: { used: number; limit: number };
+}
+export const bytesLabel = (n: number) =>
+  n < 1024 * 1024
+    ? Math.max(n ? 1 : 0, Math.round(n / 1024)) + " KB"
+    : (n / 1024 / 1024).toLocaleString("es-CO", { maximumFractionDigits: 1 }) +
+      " MB";

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import date
@@ -26,7 +27,7 @@ from bim_planner.quantities import ISSUE_COLUMNS, QuantityConfig
 
 from .auth import Account, require_project
 from .auth import router as auth_router
-from .db import INTEGRITY_ERRORS, connect, initialize
+from .db import INTEGRITY_ERRORS, close_pools, connect, database_url, initialize
 from .models import ArchiveIssue, Mapping, Options, Plan, Project, ReportOptions
 from .planning import schedule
 from .project_xml import project_xml
@@ -45,7 +46,9 @@ from .tables import (
 @asynccontextmanager
 async def lifespan(app):
     initialize()
+    check_storage()
     yield
+    close_pools()
 
 
 app = FastAPI(title="Civil BIM Planner", lifespan=lifespan)
@@ -169,6 +172,91 @@ def scheduled(plan, data):
     return schedule(plan, {i: v["detail"] for i, v in data.items()})
 
 
+logger = logging.getLogger("civil_bim.storage")
+STORAGE_WARNING = 0.7
+
+
+def storage_limit():
+    """Database plan limit in bytes (Neon Free: 0.5 GB)."""
+    return int(float(os.environ.get("CIVIL_BIM_STORAGE_LIMIT_MB", "512")) * 1024 * 1024)
+
+
+def database_size(db):
+    if database_url():
+        return db.execute(
+            "SELECT pg_database_size(current_database()) AS size"
+        ).fetchone()["size"]
+    page = db.execute("PRAGMA page_size").fetchone()[0]
+    return db.execute("PRAGMA page_count").fetchone()[0] * page
+
+
+def check_storage():
+    """Warn in the server log when the shared database nears its plan limit."""
+    try:
+        with connect() as db:
+            used = database_size(db)
+    except Exception:
+        logger.exception("No se pudo medir el tamaño de la base de datos.")
+        return None
+    share = used / storage_limit()
+    if share >= STORAGE_WARNING:
+        logger.warning(
+            "La base de datos usa %.0f MB, el %.0f %% del límite de %.0f MB. "
+            "Vacía papeleras o amplía el plan antes de que se llene.",
+            used / 2**20,
+            share * 100,
+            storage_limit() / 2**20,
+        )
+    return used
+
+
+def is_admin(user):
+    admin = os.environ.get("CIVIL_BIM_ADMIN", "").strip().lower()
+    return bool(admin) and user["username"] == admin
+
+
+@app.get("/api/usage")
+def usage(user: Account):
+    """Bytes stored by this account, so people know what to clean up."""
+    with connect() as db:
+        rows = db.execute(
+            "SELECT p.id, p.deleted_at IS NOT NULL AS trashed, "
+            "COALESCE((SELECT SUM(LENGTH(s.data) + COALESCE(LENGTH(s.result), 0)) "
+            " FROM source s WHERE s.project = p.id AND NOT EXISTS "
+            " (SELECT 1 FROM source_trash t WHERE t.source = s.id)), 0) AS tables, "
+            "COALESCE((SELECT SUM(LENGTH(s.data) + COALESCE(LENGTH(s.result), 0)) "
+            " FROM source s JOIN source_trash t ON t.source = s.id "
+            " WHERE s.project = p.id), 0) AS trashed_tables, "
+            "COALESCE((SELECT SUM(LENGTH(r.data)) FROM report r "
+            " WHERE r.project = p.id), 0) AS reports "
+            "FROM project_catalog p WHERE p.owner = ?",
+            (user["id"],),
+        ).fetchall()
+        projects, total, trash, reports = {}, 0, 0, 0
+        for r in rows:
+            active, binned, archived = (
+                int(r["tables"]), int(r["trashed_tables"]), int(r["reports"])
+            )
+            size = active + binned + archived
+            projects[r["id"]] = size
+            total += size
+            if r["trashed"]:
+                trash += size
+            else:
+                trash += binned
+                reports += archived
+        result = {
+            "total": total,
+            "trash": trash,
+            "reports": reports,
+            "projects": projects,
+        }
+        if is_admin(user):
+            used = database_size(db)
+            result["database"] = {"used": used, "limit": storage_limit()}
+        return result
+
+
 @app.get("/api/projects")
 def list_projects(user: Account, include_deleted: bool = False):
     with connect() as db:
@@ -228,6 +316,28 @@ def restore_project(pid: int, revision: int = Header(alias="If-Match")):
         project(db, pid, revision, trashed=True)
         db.execute("DELETE FROM project_trash WHERE project=?", (pid,))
         log(db, pid, "Proyecto restaurado")
+    return {"id": pid}
+
+
+def purge_sources(db, ids):
+    for sid in ids:
+        db.execute("DELETE FROM issue_archive WHERE source=?", (sid,))
+        db.execute("DELETE FROM source_trash WHERE source=?", (sid,))
+        db.execute("DELETE FROM source WHERE id=?", (sid,))
+
+
+@project_routes.delete("/permanent")
+def purge_project(pid: int, revision: int = Header(alias="If-Match")):
+    """Delete a project from the trash with all its files. Cannot be undone."""
+    with connect(True, project=pid) as db:
+        project(db, pid, revision, trashed=True)
+        purge_sources(
+            db,
+            [r["id"] for r in db.execute("SELECT id FROM source WHERE project=?", (pid,))],
+        )
+        for table in ("report", "template", "event", "project_trash"):
+            db.execute(f"DELETE FROM {table} WHERE project=?", (pid,))
+        db.execute("DELETE FROM project WHERE id=?", (pid,))
     return {"id": pid}
 
 
@@ -382,7 +492,8 @@ def save_table(
             )
         sid = inserted["id"]
         log(db, pid, f"Tabla importada · {name}")
-        return {"id": sid}
+    check_storage()
+    return {"id": sid}
 
 
 @project_routes.delete("/tables/{sid}")
@@ -415,6 +526,17 @@ def restore_table(pid: int, sid: int, revision: int = Header(alias="If-Match")):
             validate_result(db, p, sid, json.loads(row["result"]))
         db.execute("DELETE FROM source_trash WHERE source=?", (sid,))
         log(db, pid, f"Tabla restaurada · {row['name']}")
+    return {"id": sid}
+
+
+@project_routes.delete("/tables/{sid}/permanent")
+def purge_table(pid: int, sid: int, revision: int = Header(alias="If-Match")):
+    """Delete a table from the trash with its original file. Cannot be undone."""
+    with connect(True, project=pid) as db:
+        project(db, pid, revision)
+        row = source(db, pid, sid, trashed=True)
+        purge_sources(db, [sid])
+        log(db, pid, f"Tabla eliminada definitivamente · {row['name']}")
     return {"id": sid}
 
 
@@ -662,7 +784,20 @@ def report(
             (pid, "Cuantificación BIM.xlsx", content),
         ).fetchone()["id"]
         log(db, pid, "Reporte Excel generado")
-        return {"id": rid}
+    check_storage()
+    return {"id": rid}
+
+
+@project_routes.delete("/reports/{rid}")
+def delete_report(pid: int, rid: int, revision: int = Header(alias="If-Match")):
+    with connect(True, project=pid) as db:
+        project(db, pid, revision)
+        if not db.execute(
+            "DELETE FROM report WHERE id=? AND project=? RETURNING id", (rid, pid)
+        ).fetchone():
+            raise HTTPException(404, "Reporte inexistente.")
+        log(db, pid, f"Reporte #{rid} eliminado")
+    return {"id": rid}
 
 
 @project_routes.get("/reports/{rid}")
