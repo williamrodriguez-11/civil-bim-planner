@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
+  CircleHelp,
   FileSpreadsheet,
   Upload,
   ArrowRight,
@@ -66,6 +67,28 @@ const normalize = (s: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+
+function FieldHelp({ label, children }: { label: string; children: React.ReactNode }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="mapping-help" data-open={open}>
+      <button type="button" aria-label={label} aria-describedby={id}
+        onClick={() => setOpen(!open)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setOpen(false);
+            e.currentTarget.blur();
+          }
+        }}
+      >
+        <CircleHelp size={16} aria-hidden="true" />
+      </button>
+      <span className="mapping-help-text" role="tooltip" id={id}>{children}</span>
+    </span>
+  );
+}
 
 function Importer({
   mutate,
@@ -330,7 +353,7 @@ function Configure({
   source: Source;
   state: State;
   mutate: Mutation;
-  viewQuantities: (tab: QuantityTab) => void;
+  viewQuantities: (tab: QuantityTab, tableId: number) => void;
 }) {
   const saved = state.results[source.id];
   function suggested(): Mapping {
@@ -378,6 +401,18 @@ function Configure({
     setMapping({ ...mapping, ...v });
     setMessage("");
   };
+  const formatIssues = (saved?.issues ?? []).flatMap((row) => {
+    const format = /corresponde al formato con (punto|coma) decimal/.exec(
+      String(row.Motivo ?? ""),
+    )?.[1];
+    return format ? [format] : [];
+  });
+  const suggestedFormat = new Set(formatIssues).size === 1 ? formatIssues[0] : undefined;
+  const suggestedDecimal = suggestedFormat === "punto" ? "." : ",";
+  const showDecimalFix = suggestedFormat && suggestedDecimal !== mapping.decimal;
+  const levelIssues = (saved?.issues ?? []).filter((row) =>
+    String(row.Motivo ?? "").startsWith("Nivel vacío"),
+  );
   const active = [
     "level",
     "type",
@@ -409,6 +444,8 @@ function Configure({
     setMessage("");
     setBusy(true);
     try {
+      if (!mapping.category.trim() && !mapping.category_field)
+        throw Error("Escribe una categoría para esta tabla, por ejemplo Vigas.");
       const ids = excluded.trim()
         ? excluded.split(",").map((v) => Number(v.trim()))
         : [];
@@ -445,6 +482,9 @@ function Configure({
       <div className="section-title">
         <SlidersHorizontal />
         <h3>Preparar cantidades de esta tabla</h3>
+        <FieldHelp label="Ayuda para preparar cantidades">
+          Elige qué columnas de tu archivo aportan los datos para el cálculo.
+        </FieldHelp>
       </div>
       {!!Object.keys(state.templates).length && (
         <label>
@@ -469,11 +509,14 @@ function Configure({
           </select>
         </label>
       )}
-      <p className="field-help">
-        Indica qué elementos contiene la tabla y elige las columnas que aportan
-        sus medidas. Cada selector muestra los encabezados de tu archivo.
-      </p>
-      <h4>Qué estás midiendo</h4><p className="field-help">Categoría es el nombre del elemento, por ejemplo Columnas. Nivel es el piso donde está ubicado.</p>
+      <div className="mapping-heading">
+        <h4>Configuración de la tabla</h4>
+        <FieldHelp label="Ayuda sobre categoría y decimales">
+          Escribe la categoría, por ejemplo Vigas. Usa «Categoría desde una
+          columna» solo si el archivo trae distintas categorías. Si los valores
+          se ven como 22.85, elige Punto decimal. Para 22,85, elige Coma decimal.
+        </FieldHelp>
+      </div>
       <div className="form-grid mapping-grid">
         <label>
           Categoría
@@ -561,23 +604,25 @@ function Configure({
           </label>
         )}
       </div>
-      <p>
-        {mapping.mode === "direct"
-          ? "Asigna nivel y volumen. Sin campo de cantidad, una fila válida representa un elemento."
-          : mapping.mode === "inventory"
-            ? "Asigna nivel y las mediciones disponibles. Sin campo de cantidad, una fila válida representa un elemento."
-            : "Las dimensiones son por elemento. La geometría rectangular se multiplica por la cantidad, sin descontar huecos."}{" "}
-        Confirma cada unidad de origen.
-      </p>
       {mapping.category_field &&
         mapping.category_field === mapping.fields.level && (
-          <p className="error">
-            Estás usando la misma columna para categoría y nivel. Si todos los
-            elementos son columnas o vigas, deja “Categoría desde una columna”
-            en “Sin asignar” y escribe la categoría arriba.
-          </p>
+          <div className="notice tools">
+            <span>La categoría y el nivel usan la misma columna.</span>
+            <button onClick={() => change({ category_field: "" })}>
+              Usar la categoría escrita
+            </button>
+          </div>
         )}
-      <h4>Columnas que se usarán en el cálculo</h4>
+      <div className="mapping-heading">
+        <h4>Columnas del cálculo</h4>
+        <FieldHelp label="Ayuda sobre las columnas del cálculo">
+          Nivel es el piso del elemento. Confirma la unidad de cada medida.
+          {mapping.mode === "dimensions"
+            ? " Las dimensiones son por elemento y la fórmula no descuenta huecos."
+            : " Si dejas Cantidad sin asignar, cada fila válida cuenta como un elemento."}
+          {" Usa los campos opcionales solo si tu tabla contiene esos datos."}
+        </FieldHelp>
+      </div>
       <div className="form-grid mapping-grid">
         {active
           .filter(
@@ -646,10 +691,6 @@ function Configure({
       >
         {advanced ? "Ocultar campos opcionales" : "Añadir otra medición o dato"}
       </button>
-      <p className="field-help">
-        Usa los campos opcionales para cantidad, área, longitud, peso, familia o
-        material cuando tu tabla contenga esos datos.
-      </p>
       <details>
         <summary>Filtros, exclusiones y plantilla</summary>
         <div className="form-grid">
@@ -723,15 +764,16 @@ function Configure({
           </label>
         </div>
       </details>
-      <p className="field-help">
-        Calcular y guardar aplica las columnas y unidades elegidas, calcula las
-        cantidades y guarda el resultado para Cuantificación y Reportes. Si
-        cambias esta configuración, pulsa el botón de nuevo para actualizarlo.
-        El archivo original se conserva.
-      </p>
-      <button className="primary" disabled={busy} onClick={save}>
-        Calcular y guardar
-      </button>
+      <div className="mapping-heading">
+        <button className="primary" disabled={busy} onClick={save}>
+          {busy ? "Calculando…" : "Calcular y guardar"}
+        </button>
+        <FieldHelp label="Ayuda sobre el guardado de cantidades">
+          Aplica las columnas y unidades elegidas y guarda las cantidades para
+          Cuantificación y Reportes. Si cambias la configuración, vuelve a pulsar
+          el botón.
+        </FieldHelp>
+      </div>
       {message && (
         <p role="status" className="error">
           {message}
@@ -744,14 +786,30 @@ function Configure({
               ? `Cuantificación guardada. Filas cuantificadas: ${saved.detail.length}. Filas fuera del cálculo: ${saved.issues.length}.`
               : `Último cálculo guardado sin filas cuantificadas. Filas fuera del cálculo: ${saved.issues.length}. ${saved.issues[0]?.Motivo ?? ""}`}
           </p>
+          {showDecimalFix && (
+            <p>
+              {formatIssues.length} {formatIssues.length === 1 ? "fila requiere" : "filas requieren"} {suggestedFormat} decimal.
+              {" "}Aplica el formato y vuelve a pulsar «Calcular y guardar».
+            </p>
+          )}
+          {!!levelIssues.length && (
+            <p>Revisa el nivel en {levelIssues.length === 1
+              ? `la fila ${levelIssues[0]["Fila origen"]}`
+              : `${levelIssues.length} filas`}. Si es un encabezado o un separador, puedes excluir esa fila del cálculo.</p>
+          )}
           <div className="tools">
+            {showDecimalFix && (
+              <button onClick={() => change({ decimal: suggestedDecimal })}>
+                {suggestedDecimal === "." ? "Usar punto decimal" : "Usar coma decimal"}
+              </button>
+            )}
             {!!saved.detail.length && (
-              <button onClick={() => viewQuantities("Detalle")}>
+              <button onClick={() => viewQuantities("Detalle", source.id)}>
                 Ver detalle del proyecto
               </button>
             )}
             {!!saved.issues.length && (
-              <button onClick={() => viewQuantities("Incidencias")}>
+              <button onClick={() => viewQuantities("Incidencias", source.id)}>
                 Revisar filas omitidas
               </button>
             )}
@@ -769,7 +827,7 @@ export function Tables({
 }: {
   state: State;
   mutate: Mutation;
-  viewQuantities: (tab: QuantityTab) => void;
+  viewQuantities: (tab: QuantityTab, tableId: number) => void;
 }) {
   const [selectedId, setId] = useState<number>(state.tables[0]?.id ?? 0),
     [loaded, setLoaded] = useState<{ id: number; table: Table } | null>(null),

@@ -32,6 +32,11 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
     buffer: Buffer.from("Planta;Medición;Marca\nPB;12,5;P-01\nPB;2,5;P-02"),
   });
   await page.getByRole("button", { name: "Guardar tabla" }).click();
+  const mappingHelp = page.getByRole("button", { name: "Ayuda sobre categoría y decimales" });
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await mappingHelp.focus();
+  await expect(page.getByRole("tooltip")).toContainText("22.85");
+  await mappingHelp.press("Escape");
   await page
     .getByRole("combobox", { name: "Categoría", exact: true })
     .fill("Pilotes");
@@ -50,9 +55,10 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await expect(page.getByRole("button", { name: "Filas por revisar · 2" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("cell", { name: /12,5.*coma decimal/ })).toBeVisible();
   await page.getByRole("button", { name: "Detalle", exact: true }).click();
-  await expect(page.getByText("No hay filas cuantificadas")).toBeVisible();
+  await expect(page.getByText("No hay filas cuantificadas en la selección")).toBeVisible();
   await page.getByRole("button", { name: "Tablas de origen", exact: true }).click();
-  await page.getByLabel("Decimal en texto").selectOption(",");
+  await page.getByRole("button", { name: "Usar coma decimal" }).click();
+  await expect(page.getByLabel("Decimal en texto")).toHaveValue(",");
   await page.getByRole("button", { name: "Calcular y guardar" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Cuantificación guardada",

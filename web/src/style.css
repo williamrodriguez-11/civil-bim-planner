@@ -1177,3 +1177,46 @@ progress { width: 100%; height: 12px; accent-color: #598366; }
 .quantity-filters { grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); }
 .quantity-group { display: block; max-width: 360px; }
 .mapping-grid .field-help { display: block; margin: 5px 0; line-height: 1.5; }
+.mapping-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 10px;
+}
+.mapping-heading h4 { margin: 0; }
+.mapping-help { position: relative; display: inline-flex; }
+.mapping-help > button {
+  display: grid;
+  place-items: center;
+  min-height: 28px;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.mapping-help-text {
+  display: none;
+  position: absolute;
+  z-index: 3;
+  top: 100%;
+  right: -34px;
+  width: min(280px, calc(100vw - 70px));
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 5px 16px #0002;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.mapping-help:hover > .mapping-help-text,
+.mapping-help:focus-within > .mapping-help-text,
+.mapping-help[data-open="true"] > .mapping-help-text { display: block; }
+.mapping-heading .mapping-help-text { right: auto; left: -140px; }
+@media (max-width: 600px) {
+  .subsection .section-title, .mapping-heading { position: relative; }
+  .subsection .mapping-help { position: static; }
+  .subsection .mapping-help-text { right: auto; left: 0; }
+}

@@ -390,13 +390,16 @@ export function Overview({
 export function Quantities({
   state,
   initialTab,
+  initialTableId,
   mutate,
 }: {
   state: State;
   initialTab?: QuantityTab;
+  initialTableId: number;
   mutate: Mutation;
 }) {
-  const [tableId, setTableId] = useState(0);
+  const [selectedTableId, setTableId] = useState(initialTableId);
+  const tableId = state.tables.some(({ id }) => id === selectedTableId) ? selectedTableId : 0;
   const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

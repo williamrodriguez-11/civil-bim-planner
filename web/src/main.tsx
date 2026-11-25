@@ -316,6 +316,7 @@ function App({
     [error, setError] = useState(""),
     [page, setPage] = useState<Page>("Resumen"),
     [quantityTab, setQuantityTab] = useState<QuantityTab>(),
+    [quantityTableId, setQuantityTableId] = useState(0),
     [form, setForm] = useState<"new" | "edit" | null>(null);
   const [showTrash, setShowTrash] = useState(false),
     [toDelete, setToDelete] = useState<Project | null>(null),
@@ -422,8 +423,9 @@ function App({
       setPending(false);
     }
   }
-  const go = (p: Page, tab?: QuantityTab) => {
+  const go = (p: Page, tab?: QuantityTab, tableId = 0) => {
     setQuantityTab(tab);
+    setQuantityTableId(tableId);
     setPage(p);
     setShowTrash(false);
     setNotice("");
@@ -681,10 +683,10 @@ function App({
                 <Tables
                   state={state}
                   mutate={mutate}
-                  viewQuantities={(tab) => go("Cuantificación", tab)}
+                  viewQuantities={(tab, tableId) => go("Cuantificación", tab, tableId)}
                 />
               ) : page === "Cuantificación" ? (
-                <Quantities state={state} initialTab={quantityTab} mutate={mutate} />
+                <Quantities state={state} initialTab={quantityTab} initialTableId={quantityTableId} mutate={mutate} />
               ) : page === "Programación" ? (
                 <Schedule state={state} mutate={mutate} />
               ) : (
