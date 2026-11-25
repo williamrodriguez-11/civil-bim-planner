@@ -56,18 +56,29 @@ export function Overview({
     tasks = state?.schedule ?? [],
     [groupBy, setGroupBy] = useState("Nivel"),
     [selectedKey, setSelectedKey] = useState(""),
-    [chartView, setChartView] = useState("Barras");
-  const quantities = summarizeMeasurements(data);
+    [chartView, setChartView] = useState("Barras"),
+    [categoryFilter, setCategoryFilter] = useState("");
+  const categories = Array.from(
+    new Set(data.map((r) => String(r.Categoría))),
+  ).sort((a, b) => a.localeCompare(b, "es"));
+  const category = categories.includes(categoryFilter) ? categoryFilter : "";
+  // Quantities of different categories are only mixed when "Todas" is chosen.
+  const shown = category
+    ? data.filter((r) => String(r.Categoría) === category)
+    : data;
+  const quantities = summarizeMeasurements(shown);
+  // With one category chosen, grouping by category would show a single bar.
+  const grouping = category && groupBy === "Categoría" ? "Nivel" : groupBy;
   const selected =
     quantities.find((m) => m.key === selectedKey) ?? quantities[0];
   const groups = new Map<string, Row[]>();
-  for (const row of data) {
+  for (const row of shown) {
     if (
       !selected ||
       (selected.category !== undefined && row.Categoría !== selected.category)
     )
       continue;
-    const group = String(row[groupBy]);
+    const group = String(row[grouping]);
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group)!.push(row);
   }
@@ -108,7 +119,7 @@ export function Overview({
       page: "Cuantificación",
     },
     {
-      name: "Cantidades de obra",
+      name: category ? "Cantidades de obra · " + category : "Cantidades de obra",
       measurement: true,
       value: selected ? totalLabel(selected) : "—",
       Icon: Box,
@@ -227,15 +238,39 @@ export function Overview({
             <ChartColumn />
             <h2>
               {selected
-                ? "Distribución · " + measurementName(selected)
+                ? "Distribución · " +
+                  measurementName(selected) +
+                  (category && !selected.category ? " · " + category : "")
                 : "Distribución de cantidades"}
             </h2>
           </div>
+          {categories.length > 1 && (
+            <label className="category-filter">
+              Categoría
+              <select
+                value={category}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+              >
+                <option value="">Todas las categorías (suma)</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="tabs">
             {["Nivel", "Categoría"].map((k) => (
               <button
                 key={k}
-                aria-pressed={k === groupBy}
+                aria-pressed={k === grouping}
+                disabled={!!category && k === "Categoría"}
+                title={
+                  category && k === "Categoría"
+                    ? "Elige «Todas las categorías» para compararlas"
+                    : undefined
+                }
                 onClick={() => setGroupBy(k)}
               >
                 Por {k.toLowerCase()}
@@ -256,7 +291,7 @@ export function Overview({
           {sums.length && chartView === "Tabla" ? (
             <Grid
               rows={sums.map(({ name, measure }) => ({
-                [groupBy]: name,
+                [grouping]: name,
                 Cantidad: measurementTotal(measure),
                 Unidad: unitLabel(measure.unit),
               }))}
