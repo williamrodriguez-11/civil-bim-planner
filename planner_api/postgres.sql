@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS source(
 CREATE TABLE IF NOT EXISTS source_trash(
  source INTEGER PRIMARY KEY REFERENCES source(id),
  deleted_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::text);
+CREATE TABLE IF NOT EXISTS issue_archive(
+ source INTEGER NOT NULL REFERENCES source(id), digest TEXT NOT NULL, issue TEXT NOT NULL,
+ archived_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::text,
+ PRIMARY KEY(source, digest));
 CREATE OR REPLACE VIEW source_catalog AS
  SELECT source.*, source_trash.deleted_at
  FROM source LEFT JOIN source_trash ON source_trash.source = source.id;

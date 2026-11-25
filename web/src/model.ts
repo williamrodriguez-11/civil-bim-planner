@@ -101,6 +101,10 @@ export interface State {
   trashed_tables: Pick<Source, "id" | "name" | "sheet">[];
   templates: Record<string, Mapping>;
   results: Record<number, { detail: Row[]; issues: Row[] }>;
+  issue_review?: Record<number, {
+    pending: number[];
+    history: { id: string; row: Row; archived_at: string; current: boolean }[];
+  }>;
   plan: Plan;
   schedule: Scheduled[];
   events: { message: string; created: string }[];
@@ -146,4 +150,7 @@ export const cleanError = (e: unknown) =>
 export const details = (s: State | null) =>
   Object.values(s?.results ?? {}).flatMap((x) => x.detail);
 export const issues = (s: State | null) =>
-  Object.values(s?.results ?? {}).flatMap((x) => x.issues);
+  Object.entries(s?.results ?? {}).flatMap(([id, result]) =>
+    s?.issue_review?.[Number(id)]?.pending.map((index) => result.issues[index]) ??
+    result.issues,
+  );

@@ -58,7 +58,15 @@ export function Empty({
     </div>
   );
 }
-export function Grid({ rows, columns }: { rows: Row[]; columns?: string[] }) {
+export function Grid({
+  rows,
+  columns,
+  rowAction,
+}: {
+  rows: Row[];
+  columns?: string[];
+  rowAction?: (row: Row) => React.ReactNode;
+}) {
   const keys = useMemo(
     () => columns ?? Array.from(new Set(rows.flatMap((r) => Object.keys(r)))),
     [rows, columns],
@@ -208,6 +216,7 @@ export function Grid({ rows, columns }: { rows: Row[]; columns?: string[] }) {
                   )}
                 </th>
               ))}
+              {!group && rowAction && <th scope="col">Acción</th>}
             </tr>
           </thead>
           <tbody>
@@ -220,6 +229,7 @@ export function Grid({ rows, columns }: { rows: Row[]; columns?: string[] }) {
                       : (r[k] ?? "—")}
                   </td>
                 ))}
+                {!group && rowAction && <td>{rowAction(r)}</td>}
               </tr>
             ))}
           </tbody>

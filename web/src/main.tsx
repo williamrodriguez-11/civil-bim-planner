@@ -684,7 +684,7 @@ function App({
                   viewQuantities={(tab) => go("Cuantificación", tab)}
                 />
               ) : page === "Cuantificación" ? (
-                <Quantities state={state} initialTab={quantityTab} />
+                <Quantities state={state} initialTab={quantityTab} mutate={mutate} />
               ) : page === "Programación" ? (
                 <Schedule state={state} mutate={mutate} />
               ) : (

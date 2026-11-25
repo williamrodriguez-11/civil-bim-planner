@@ -14,19 +14,29 @@ test("El espacio de trabajo se adapta y permite elegir el contenido del reporte"
     category: "Columnas", mode: "direct", decimal: ",", direct_basis: "row_total",
     fields: { level: "Nivel", volume: "Volumen" }, units: { volume: "m³" }
   } });
+  const otherSource = await request.post(base + "/tables", { headers: await revision(), multipart: {
+    file: { name: "Vigas.csv", mimeType: "text/csv", buffer: Buffer.from("Nivel;Volumen\nP3;10\nGrand total;10") }, options: "{}"
+  } });
+  const otherId = (await otherSource.json()).id;
+  await request.put(base + "/tables/" + otherId + "/mapping", { headers: await revision(), data: {
+    category: "Vigas", mode: "direct", decimal: ",", direct_basis: "row_total",
+    fields: { level: "Nivel", volume: "Volumen" }, units: { volume: "m³" }
+  } });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   await page.getByRole("button", { name: "Proporciones", exact: true }).click();
-  await expect(page.locator(".proportions")).toContainText("60 %");
+  await expect(page.locator(".proportions")).toContainText("66,667 %");
   await page.getByRole("button", { name: "Tabla", exact: true }).click();
   await expect(page.getByRole("cell", { name: "P1", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cuantificación", exact: true }).click();
+  await page.getByLabel("Tabla para analizar").selectOption(String(sid));
   await page.getByRole("button", { name: "Detalle", exact: true }).click();
   for (const name of ["Área (m²)", "ID", "Material", "Familia", "Resistencia"]) {
     await expect(page.getByRole("columnheader", { name, exact: true })).toHaveCount(0);
     await expect(page.getByLabel("Buscar por campo").getByRole("option", { name, exact: true })).toHaveCount(0);
   }
   await expect(page.getByRole("columnheader", { name: "Volumen (m³)", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "P3", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Resumen", exact: true }).last().click();
   for (const width of [2560, 1366, 390]) {
     await page.setViewportSize({ width, height: 960 });
@@ -37,7 +47,18 @@ test("El espacio de trabajo se adapta y permite elegir el contenido del reporte"
   await page.setViewportSize({ width: 1366, height: 960 });
   await page.getByRole("button", { name: "Filas por revisar · 1" }).click();
   await expect(page.getByRole("cell", { name: "Total omitido", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Archivar", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pendientes · 0" })).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Cuantificación", exact: true }).click();
+  await page.getByRole("button", { name: "Filas por revisar · 1" }).click();
+  await expect(page.getByRole("cell", { name: "Vigas.csv", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Historial · 1" }).click();
+  await expect(page.getByRole("cell", { name: "Columnas.csv", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Volver a pendientes" }).click();
+  await expect(page.getByRole("button", { name: "Pendientes · 2" })).toBeVisible();
   await page.getByRole("button", { name: "Reportes", exact: true }).click();
+  await page.getByLabel("Vigas.csv", { exact: true }).uncheck();
   await page.getByLabel("Resumen por nivel", { exact: true }).uncheck();
   const response = page.waitForRequest(r => r.url().endsWith("/reports") && r.method() === "POST");
   const download = page.waitForEvent("download");

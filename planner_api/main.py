@@ -2,6 +2,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from datetime import date
+from hashlib import sha256
 from pathlib import Path
 
 import pandas as pd
@@ -26,7 +27,7 @@ from bim_planner.quantities import ISSUE_COLUMNS, QuantityConfig
 from .auth import Account, require_project
 from .auth import router as auth_router
 from .db import INTEGRITY_ERRORS, connect, initialize
-from .models import Mapping, Options, Plan, Project, ReportOptions
+from .models import ArchiveIssue, Mapping, Options, Plan, Project, ReportOptions
 from .planning import schedule
 from .project_xml import project_xml
 from . import social
@@ -126,6 +127,44 @@ def results(db, pid):
     return {r["id"]: json.loads(r["result"]) for r in rows}
 
 
+def issue_snapshot(row):
+    return json.dumps(row, sort_keys=True, ensure_ascii=False)
+
+
+def issue_review(db, pid, data):
+    review = {}
+    archived = {}
+    for record in db.execute(
+        "SELECT a.* FROM issue_archive a JOIN source_catalog s ON s.id=a.source "
+        "WHERE s.project=? AND s.deleted_at IS NULL ORDER BY a.archived_at DESC, a.digest",
+        (pid,),
+    ):
+        archived.setdefault(record["source"], {})[record["issue"]] = record
+    for sid in data.keys() | archived.keys():
+        history = archived.get(sid, {})
+        pending = []
+        current = set()
+        for index, row in enumerate(data.get(sid, {}).get("issues", [])):
+            snapshot = issue_snapshot(row) if history else None
+            if snapshot in history:
+                current.add(snapshot)
+            else:
+                pending.append(index)
+        review[sid] = {
+            "pending": pending,
+            "history": [
+                {
+                    "id": record["digest"],
+                    "row": json.loads(snapshot),
+                    "archived_at": record["archived_at"],
+                    "current": snapshot in current,
+                }
+                for snapshot, record in history.items()
+            ],
+        }
+    return review
+
+
 def scheduled(plan, data):
     return schedule(plan, {i: v["detail"] for i, v in data.items()})
 
@@ -220,6 +259,7 @@ def state(pid: int):
                 )
             ],
             "results": data,
+            "issue_review": issue_review(db, pid, data),
             "plan": plan.model_dump(mode="json"),
             "schedule": scheduled(plan, data),
             "events": [
@@ -243,6 +283,45 @@ def state(pid: int):
                 )
             ],
         }
+
+
+@project_routes.post("/tables/{sid}/issue-archive")
+def archive_issue(
+    pid: int, sid: int, entry: ArchiveIssue, revision: int = Header(alias="If-Match")
+):
+    with connect(True) as db:
+        project(db, pid, revision)
+        table = source(db, pid, sid)
+        rows = json.loads(table["result"])["issues"] if table["result"] else []
+        if entry.index >= len(rows):
+            raise HTTPException(404, "La incidencia ya no está en el cálculo.")
+        snapshot = issue_snapshot(rows[entry.index])
+        digest = sha256(snapshot.encode()).hexdigest()
+        db.execute(
+            "INSERT INTO issue_archive(source,digest,issue) VALUES(?,?,?) "
+            "ON CONFLICT(source,digest) DO NOTHING",
+            (sid, digest, snapshot),
+        )
+        log(db, pid, "Incidencia archivada")
+        return {"id": sid}
+
+
+@project_routes.post("/tables/{sid}/issue-archive/{digest}/restore")
+def restore_issue(
+    pid: int, sid: int, digest: str, revision: int = Header(alias="If-Match")
+):
+    with connect(True) as db:
+        project(db, pid, revision)
+        table = source(db, pid, sid)
+        record = db.execute(
+            "SELECT issue FROM issue_archive WHERE source=? AND digest=?", (sid, digest)
+        ).fetchone()
+        rows = json.loads(table["result"])["issues"] if table["result"] else []
+        if record is None or not any(issue_snapshot(row) == record["issue"] for row in rows):
+            raise HTTPException(409, "La incidencia ya no está en el cálculo actual.")
+        db.execute("DELETE FROM issue_archive WHERE source=? AND digest=?", (sid, digest))
+        log(db, pid, "Incidencia devuelta a revisión")
+        return {"id": sid}
 
 
 def upload(file):

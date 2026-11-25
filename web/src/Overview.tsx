@@ -14,9 +14,12 @@ import {
 } from "lucide-react";
 import { Blueprint } from "./Blueprint";
 import {
+  cleanError,
+  dateLabel,
   details,
   fmt,
   issues,
+  type Mutation,
   type Page,
   type QuantityTab,
   type Row,
@@ -387,12 +390,56 @@ export function Overview({
 export function Quantities({
   state,
   initialTab,
+  mutate,
 }: {
   state: State;
   initialTab?: QuantityTab;
+  mutate: Mutation;
 }) {
-  const all = details(state);
-  const exceptions = issues(state).map(reviewRow);
+  const [tableId, setTableId] = useState(0);
+  const [showHistory, setShowHistory] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const tables = state.tables.filter((table) => !tableId || table.id === tableId);
+  const all = tables.flatMap(({ id }) => state.results[id]?.detail ?? []);
+  const pending = new Map<Row, { id: number; index: number }>();
+  const history = new Map<Row, { id: number; digest: string; current: boolean }>();
+  for (const table of tables) {
+    const { id, name, sheet } = table;
+    const label = sheet ? name + " · " + sheet : name;
+    const rows = state.results[id]?.issues ?? [];
+    const review = state.issue_review?.[id];
+    for (const index of review?.pending ?? rows.map((_, index) => index)) {
+      pending.set(reviewRow({ ...rows[index], Archivo: label }), { id, index });
+    }
+    for (const entry of review?.history ?? []) {
+      const { Categoría, Estado, Motivo } = entry.row;
+      const row = reviewRow({
+        Categoría,
+        Archivo: label,
+        "Fila origen": entry.row["Fila origen"],
+        Estado,
+        Motivo,
+      });
+      history.set({
+        ...row,
+        "Archivada el": dateLabel(entry.archived_at),
+      }, { id, digest: entry.id, current: entry.current });
+    }
+  }
+  const exceptions = Array.from(pending.keys());
+  const hasArchivedCurrent = Array.from(history.values()).some((entry) => entry.current);
+  async function updateIssue(path: string, body: object) {
+    setBusy(true);
+    setError("");
+    try {
+      await mutate(path, body);
+    } catch (e) {
+      setError(cleanError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   const [filters, setFilters] = useState<Record<string, string>>({}),
     [tab, setTab] = useState<QuantityTab>(
       initialTab ??
@@ -442,6 +489,23 @@ export function Quantities({
         <Ruler />
         <h2>Mediciones consolidadas</h2>
       </div>
+      <label className="quantity-group">
+        Tabla para analizar
+        <select
+          value={tableId}
+          onChange={(e) => {
+            setTableId(Number(e.target.value));
+            setFilters({});
+            setGroup("Nivel");
+            setError("");
+          }}
+        >
+          <option value={0}>Todas las tablas</option>
+          {state.tables.map(({ id, name, sheet }) => (
+            <option key={id} value={id}>{name}{sheet && " · " + sheet}</option>
+          ))}
+        </select>
+      </label>
       <div className="tabs">
         {(["Resumen", "Detalle", "Incidencias"] as const).map((k) => (
           <button key={k} aria-pressed={k === tab} onClick={() => setTab(k)}>
@@ -455,21 +519,58 @@ export function Quantities({
           <p className="field-help">
             Estas filas quedaron fuera de las cantidades. Los totales se omiten
             porque sus elementos ya están contados. Las filas “Por corregir”
-            necesitan revisar sus datos o configuración.
+            necesitan revisar sus datos o configuración. Archivar una fila la
+            mueve al historial y conserva el resultado del cálculo.
           </p>
-          <Grid rows={exceptions} />
+          <div className="tabs">
+            <button aria-pressed={!showHistory} onClick={() => setShowHistory(false)}>
+              Pendientes · {exceptions.length}
+            </button>
+            <button aria-pressed={showHistory} onClick={() => setShowHistory(true)}>
+              Historial · {history.size}
+            </button>
+          </div>
+          {error && <p role="alert" className="error">{error}</p>}
+          {showHistory ? (
+            <Grid key={tableId + ":historial"} rows={Array.from(history.keys())}
+              rowAction={(row) => {
+                const entry = history.get(row)!;
+                return entry.current ? (
+                  <button disabled={busy} onClick={() => updateIssue(
+                    "/tables/" + entry.id + "/issue-archive/" + entry.digest + "/restore", {},
+                  )}>Volver a pendientes</button>
+                ) : <span>Ya no aparece en el cálculo actual</span>;
+              }}
+            />
+          ) : (
+            <Grid key={tableId + ":pendientes"} rows={exceptions}
+              rowAction={(row) => {
+                const entry = pending.get(row)!;
+                return <button disabled={busy} onClick={() => updateIssue(
+                  "/tables/" + entry.id + "/issue-archive", { index: entry.index },
+                )}>Archivar</button>;
+              }}
+            />
+          )}
         </div>
       ) : !all.length ? (
         <Empty
           title={
-            exceptions.length
-              ? "No hay filas cuantificadas"
+            exceptions.length || hasArchivedCurrent
+              ? "No hay filas cuantificadas en la selección"
               : "Aún no hay mediciones guardadas"
           }
         >
           {exceptions.length ? (
             <button onClick={() => setTab("Incidencias")}>
               Ver incidencias ({exceptions.length})
+            </button>
+          ) : hasArchivedCurrent ? (
+            <button onClick={() => {
+              setShowHistory(true);
+              setTab("Incidencias");
+            }}>
+              Ver historial
             </button>
           ) : (
             "En Tablas de origen, configura las mediciones y pulsa Calcular y guardar."
@@ -533,7 +634,7 @@ export function Quantities({
             </label>
           )}
           <Grid
-            key={tab + group + JSON.stringify(populatedColumns)}
+            key={tableId + tab + group + JSON.stringify(populatedColumns)}
             rows={displayedRows}
             columns={populatedColumns}
           />

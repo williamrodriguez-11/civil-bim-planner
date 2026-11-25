@@ -30,6 +30,10 @@ class Options(Input):
     trim: bool = False
 
 
+class ArchiveIssue(Input):
+    index: int = Field(ge=0)
+
+
 class ReportOptions(Input):
     sections: list[
         Literal[
