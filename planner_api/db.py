@@ -79,14 +79,19 @@ class PostgresConnection:
 
 
 @contextmanager
-def connect(write=False):
+def connect(write=False, project=None):
+    """Open a transaction. Writes to one project only wait for writes to that project."""
     url = database_url()
     if url:
         with psycopg.connect(
             url, row_factory=dict_row, connect_timeout=15, prepare_threshold=None
         ) as pg:
-            if write:
-                # Serialize revision checks and updates, as SQLite BEGIN IMMEDIATE does.
+            if write and project is not None:
+                # Serialize revision checks and updates per project. The two-key
+                # lock space does not overlap the single-key lock below.
+                pg.execute("SELECT pg_advisory_xact_lock(6908765, %s)", (project,))
+            elif write:
+                # Account and workspace writes, as SQLite BEGIN IMMEDIATE does.
                 pg.execute("SELECT pg_advisory_xact_lock(6908765)")
             else:
                 pg.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")

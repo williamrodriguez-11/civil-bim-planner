@@ -203,7 +203,7 @@ def create(p: Project, user: Account):
 
 @project_routes.put("")
 def edit(pid: int, p: Project, revision: int = Header(alias="If-Match")):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision)
         db.execute(
             "UPDATE project SET name=?,description=?,kind=?,location=?,status=? WHERE id=?",
@@ -215,7 +215,7 @@ def edit(pid: int, p: Project, revision: int = Header(alias="If-Match")):
 
 @project_routes.delete("")
 def trash_project(pid: int, revision: int = Header(alias="If-Match")):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision)
         db.execute("INSERT INTO project_trash(project) VALUES(?)", (pid,))
         log(db, pid, "Proyecto enviado a la papelera")
@@ -224,7 +224,7 @@ def trash_project(pid: int, revision: int = Header(alias="If-Match")):
 
 @project_routes.post("/restore")
 def restore_project(pid: int, revision: int = Header(alias="If-Match")):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision, trashed=True)
         db.execute("DELETE FROM project_trash WHERE project=?", (pid,))
         log(db, pid, "Proyecto restaurado")
@@ -289,7 +289,7 @@ def state(pid: int):
 def archive_issue(
     pid: int, sid: int, entry: ArchiveIssue, revision: int = Header(alias="If-Match")
 ):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision)
         table = source(db, pid, sid)
         rows = json.loads(table["result"])["issues"] if table["result"] else []
@@ -310,7 +310,7 @@ def archive_issue(
 def restore_issue(
     pid: int, sid: int, digest: str, revision: int = Header(alias="If-Match")
 ):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision)
         table = source(db, pid, sid)
         record = db.execute(
@@ -362,7 +362,7 @@ def save_table(
     opts = Options.model_validate_json(options)
     read(data, name, opts)
     digest, sheet = identity(data, opts, sheets)
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision)
         inserted = db.execute(
             "INSERT INTO source(project,name,digest,data,sheet,options) VALUES(?,?,?,?,?,?) ON CONFLICT(project,digest,sheet) DO NOTHING RETURNING id",
@@ -387,7 +387,7 @@ def save_table(
 
 @project_routes.delete("/tables/{sid}")
 def trash_table(pid: int, sid: int, revision: int = Header(alias="If-Match")):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         row = source(db, pid, sid)
         linked = [
@@ -408,7 +408,7 @@ def trash_table(pid: int, sid: int, revision: int = Header(alias="If-Match")):
 
 @project_routes.post("/tables/{sid}/restore")
 def restore_table(pid: int, sid: int, revision: int = Header(alias="If-Match")):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         row = source(db, pid, sid, trashed=True)
         if row["result"]:
@@ -449,7 +449,7 @@ def original(pid: int, sid: int):
 def revise_options(
     pid: int, sid: int, options: Options, revision: int = Header(alias="If-Match")
 ):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         row = source(db, pid, sid)
         sheets = inspect_file(row["data"], row["name"])
@@ -516,7 +516,7 @@ def assign(
     revision: int = Header(alias="If-Match"),
     template: str = "",
 ):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         row = source(db, pid, sid)
         frame = read(
@@ -545,7 +545,7 @@ def assign(
 
 @project_routes.put("/plan")
 def update_plan(pid: int, plan: Plan, revision: int = Header(alias="If-Match")):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         project(db, pid, revision)
         scheduled(plan, results(db, pid))
         db.execute(
@@ -576,7 +576,7 @@ def report(
     options: ReportOptions = ReportOptions(),
     revision: int = Header(alias="If-Match"),
 ):
-    with connect(True) as db:
+    with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         tables = list(
             db.execute(

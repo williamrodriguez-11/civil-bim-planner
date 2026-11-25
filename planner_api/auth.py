@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import threading
 import time
 from typing import Annotated
 
@@ -13,6 +14,11 @@ from .db import INTEGRITY_ERRORS, connect
 router = APIRouter(prefix="/api/auth")
 COOKIE = "civil_session"
 LIFETIME = 14 * 24 * 3600
+# Each scrypt hash uses about 32 MiB. Bound concurrent hashes so a burst of
+# sign-ins cannot exhaust a small instance (Render Free has 512 MB).
+HASH_SLOTS = threading.BoundedSemaphore(2)
+CLIENT_LIMIT = 60
+ACCOUNT_LIMIT = 20
 
 
 class Credentials(BaseModel):
@@ -25,9 +31,10 @@ def digest(token):
 
 
 def password_hash(password, salt):
-    return hashlib.scrypt(
-        password.encode(), salt=salt, n=2**15, r=8, p=1, maxmem=64 << 20
-    )
+    with HASH_SLOTS:
+        return hashlib.scrypt(
+            password.encode(), salt=salt, n=2**15, r=8, p=1, maxmem=64 << 20
+        )
 
 
 def account(request: Request):
@@ -55,17 +62,24 @@ def require_project(pid: int, user: Account):
             raise HTTPException(404, "Proyecto inexistente.")
 
 
-def limit_attempts(request):
+def limit_attempts(request, username=None):
+    """Count attempts per client address and, for sign-in, per account name."""
     client = request.client.host if request.client else "unknown"
+    keys = [(client, CLIENT_LIMIT)]
+    if username:
+        keys.append(("account:" + username[:254], ACCOUNT_LIMIT))
     now = int(time.time())
+    exceeded = False
     with connect(True) as db:
         db.execute("DELETE FROM auth_attempt WHERE until<=?", (now,))
-        count = db.execute(
-            "INSERT INTO auth_attempt VALUES(?,1,?) ON CONFLICT(client) DO UPDATE "
-            "SET attempts=auth_attempt.attempts+1 RETURNING attempts",
-            (client, now + 600),
-        ).fetchone()["attempts"]
-    if count > 60:
+        for key, limit in keys:
+            count = db.execute(
+                "INSERT INTO auth_attempt VALUES(?,1,?) ON CONFLICT(client) DO UPDATE "
+                "SET attempts=auth_attempt.attempts+1 RETURNING attempts",
+                (key, now + 600),
+            ).fetchone()["attempts"]
+            exceeded = exceeded or count > limit
+    if exceeded:
         raise HTTPException(
             429, "Demasiados intentos. Vuelve a probar en diez minutos."
         )
@@ -122,7 +136,7 @@ def register(data: Credentials, request: Request, response: Response):
 
 @router.post("/login")
 def login(data: Credentials, request: Request, response: Response):
-    limit_attempts(request)
+    limit_attempts(request, data.username.strip().lower())
     with connect() as db:
         row = db.execute(
             "SELECT * FROM account WHERE username=?", (data.username.strip().lower(),)
