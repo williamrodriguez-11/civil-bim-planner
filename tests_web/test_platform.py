@@ -46,6 +46,23 @@ class Workflow(unittest.TestCase):
             "If-Match": str(self.client.get(self.base).json()["project"]["revision"])
         }
 
+    def test_sign_in_limit_is_per_account_name(self):
+        wrong = {"username": "propietaria", "password": "contraseña equivocada"}
+        with TestClient(app) as other:
+            for _ in range(20):
+                self.assertEqual(
+                    other.post("/api/auth/login", json=wrong).status_code, 401
+                )
+            self.assertEqual(other.post("/api/auth/login", json=wrong).status_code, 429)
+            # Another account from the same address is still allowed.
+            self.assertEqual(
+                other.post(
+                    "/api/auth/register",
+                    json={"username": "tercera", "password": "otra frase sintética"},
+                ).status_code,
+                201,
+            )
+
     def test_two_accounts_files_trash_and_second_computer(self):
         sid = self.load("solo-mia.csv", b"Nivel;Volumen\nN1;2")
         file_url = self.base + f"/tables/{sid}/original"
