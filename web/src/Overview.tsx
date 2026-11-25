@@ -429,6 +429,12 @@ export function Quantities({
     map.set(k, v);
   }
   const grouped = Array.from(map.values());
+  const displayedRows = tab === "Detalle" ? filtered : grouped;
+  const populatedColumns = Array.from(
+    new Set(displayedRows.flatMap((row) => Object.keys(row))),
+  ).filter((key) =>
+    displayedRows.some((row) => String(row[key] ?? "").trim() !== ""),
+  );
   const quantities = summarizeMeasurements(filtered);
   return (
     <section className="panel">
@@ -520,22 +526,16 @@ export function Quantities({
                 value={groupKey}
                 onChange={(e) => setGroup(e.target.value)}
               >
-                {[
-                  "Nivel",
-                  "Categoría",
-                  "Familia",
-                  "Tipo",
-                  "Material",
-                  "Resistencia",
-                ].map((k) => (
+                {available.map((k) => (
                   <option key={k}>{k}</option>
                 ))}
               </select>
             </label>
           )}
           <Grid
-            key={tab + group + !!filtered.length}
-            rows={tab === "Detalle" ? filtered : grouped}
+            key={tab + group + JSON.stringify(populatedColumns)}
+            rows={displayedRows}
+            columns={populatedColumns}
           />
         </>
       )}

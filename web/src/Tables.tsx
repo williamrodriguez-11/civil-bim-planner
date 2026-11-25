@@ -723,6 +723,12 @@ function Configure({
           </label>
         </div>
       </details>
+      <p className="field-help">
+        Calcular y guardar aplica las columnas y unidades elegidas, calcula las
+        cantidades y guarda el resultado para Cuantificación y Reportes. Si
+        cambias esta configuración, pulsa el botón de nuevo para actualizarlo.
+        El archivo original se conserva.
+      </p>
       <button className="primary" disabled={busy} onClick={save}>
         Calcular y guardar
       </button>

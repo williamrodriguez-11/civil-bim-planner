@@ -21,6 +21,13 @@ test("El espacio de trabajo se adapta y permite elegir el contenido del reporte"
   await page.getByRole("button", { name: "Tabla", exact: true }).click();
   await expect(page.getByRole("cell", { name: "P1", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cuantificación", exact: true }).click();
+  await page.getByRole("button", { name: "Detalle", exact: true }).click();
+  for (const name of ["Área (m²)", "ID", "Material", "Familia", "Resistencia"]) {
+    await expect(page.getByRole("columnheader", { name, exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Buscar por campo").getByRole("option", { name, exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole("columnheader", { name: "Volumen (m³)", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Resumen", exact: true }).last().click();
   for (const width of [2560, 1366, 390]) {
     await page.setViewportSize({ width, height: 960 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
