@@ -26,6 +26,7 @@ import "@fontsource-variable/inter";
 import "./style.css";
 import {
   api,
+  bytesLabel,
   cleanError,
   dateLabel,
   type Mutation,
@@ -33,6 +34,7 @@ import {
   type QuantityTab,
   type Project,
   type State,
+  type Usage,
 } from "./model";
 import { Empty, Modal } from "./shared";
 import { Overview, Quantities } from "./Overview";
@@ -187,7 +189,9 @@ function ProjectForm({
 }
 function Reports({ state, mutate }: { state: State; mutate: Mutation }) {
   const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [toRemove, setToRemove] = useState<State["reports"][number] | null>(null),
+    [removeError, setRemoveError] = useState("");
   const sections = [
     "Proyecto",
     "Resumen por nivel",
@@ -286,20 +290,125 @@ function Reports({ state, mutate }: { state: State; mutate: Mutation }) {
         <h3>Historial de reportes</h3>
         {state.reports.length ? (
           state.reports.map((r) => (
-            <a className="report" key={r.id} download href={url + r.id}>
+            <div className="report" key={r.id}>
               <FileBarChart />
               {r.name}
               <small>
                 #{r.id} · {dateLabel(r.created)}
               </small>
-              <Download size={15} />
-            </a>
+              <a
+                className="btn"
+                download
+                href={url + r.id}
+                aria-label={`Descargar reporte #${r.id}`}
+              >
+                <Download size={15} />
+              </a>
+              <button
+                aria-label={`Eliminar reporte #${r.id}`}
+                title="Eliminar reporte"
+                onClick={() => {
+                  setRemoveError("");
+                  setToRemove(r);
+                }}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
           ))
         ) : (
           <Empty title="Todavía no hay reportes" />
         )}
       </div>
+      {toRemove && (
+        <Modal
+          title="Eliminar reporte"
+          close={() => !busy && setToRemove(null)}
+        >
+          <p>
+            ¿Eliminar definitivamente el reporte{" "}
+            <strong>
+              #{toRemove.id} del {dateLabel(toRemove.created)}
+            </strong>
+            ? No se puede deshacer. Las tablas y cantidades del proyecto no
+            cambian y puedes generar otro reporte cuando quieras.
+          </p>
+          {removeError && (
+            <p className="error" role="alert">
+              {removeError}
+            </p>
+          )}
+          <div className="actions">
+            <button
+              autoFocus
+              disabled={busy}
+              onClick={() => setToRemove(null)}
+            >
+              Cancelar
+            </button>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setRemoveError("");
+                try {
+                  await mutate("/reports/" + toRemove.id, {}, "DELETE");
+                  setToRemove(null);
+                } catch (e) {
+                  setRemoveError(cleanError(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Eliminar definitivamente
+            </button>
+          </div>
+        </Modal>
+      )}
     </section>
+  );
+}
+function UsageBar({ usage }: { usage: Usage | null }) {
+  if (!usage) return null;
+  const database = usage.database;
+  const share = database ? database.used / database.limit : 0;
+  return (
+    <>
+      <p className="usage" role="status">
+        <span>
+          Tus proyectos ocupan <strong>{bytesLabel(usage.total)}</strong>
+        </span>
+        {!!usage.reports && <span>Reportes: {bytesLabel(usage.reports)}</span>}
+        {!!usage.trash && (
+          <span>
+            En la papelera: {bytesLabel(usage.trash)} (se libera al eliminarla
+            definitivamente)
+          </span>
+        )}
+      </p>
+      {database && (
+        <p className={"usage" + (share >= 0.7 ? " warning" : "")} role="status">
+          <span>
+            Base de datos compartida:{" "}
+            <strong>
+              {bytesLabel(database.used)} de {bytesLabel(database.limit)} (
+              {Math.round(share * 100)} %)
+            </strong>
+          </span>
+          <span className="meter" aria-hidden="true">
+            <i style={{ width: Math.min(100, share * 100) + "%" }} />
+          </span>
+          {share >= 0.7 && (
+            <span>
+              Queda poco espacio: vacía papeleras o amplía el plan de la base de
+              datos.
+            </span>
+          )}
+        </p>
+      )}
+    </>
   );
 }
 function App({
@@ -322,7 +431,9 @@ function App({
     [toDelete, setToDelete] = useState<Project | null>(null),
     [pending, setPending] = useState(false),
     [actionError, setActionError] = useState(""),
-    [notice, setNotice] = useState("");
+    [notice, setNotice] = useState(""),
+    [usage, setUsage] = useState<Usage | null>(null),
+    [toPurge, setToPurge] = useState<Project[] | null>(null);
   const projects = catalog.filter((p) => !p.deleted_at);
   const visibleProjects = showTrash
     ? catalog.filter((p) => p.deleted_at)
@@ -370,6 +481,16 @@ function App({
   useEffect(() => {
     void init();
   }, []);
+  useEffect(() => {
+    if (page !== "Proyectos") return;
+    let live = true;
+    api<Usage>("/usage")
+      .then((u) => live && setUsage(u))
+      .catch(() => live && setUsage(null));
+    return () => {
+      live = false;
+    };
+  }, [page, catalog]);
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     localStorage.setItem("civil-theme", dark ? "dark" : "light");
@@ -421,6 +542,42 @@ function App({
       setActionError(cleanError(e));
     } finally {
       setPending(false);
+    }
+  }
+  function closePurgeDialog() {
+    if (!pending) {
+      setToPurge(null);
+      setActionError("");
+    }
+  }
+  async function purgeProjects(list: Project[]) {
+    setPending(true);
+    setActionError("");
+    setNotice("");
+    let done = 0;
+    try {
+      for (const p of list) {
+        await api("/projects/" + p.id + "/permanent", {
+          method: "DELETE",
+          headers: { "If-Match": String(p.revision) },
+        });
+        done++;
+      }
+      setToPurge(null);
+      setNotice(
+        list.length === 1
+          ? `Se eliminó definitivamente «${list[0].name}».`
+          : `Se eliminaron definitivamente ${list.length} proyectos.`,
+      );
+    } catch (e) {
+      setToPurge(null);
+      setActionError(
+        (done ? `Se eliminaron ${done} de ${list.length}. ` : "") +
+          cleanError(e),
+      );
+    } finally {
+      setPending(false);
+      await init();
     }
   }
   const go = (p: Page, tab?: QuantityTab, tableId = 0) => {
@@ -576,6 +733,17 @@ function App({
                   {showTrash ? <FolderOpen size={15} /> : <Trash2 size={15} />}
                   {showTrash ? "Volver a proyectos" : "Papelera"}
                 </button>
+                {showTrash && !!visibleProjects.length && (
+                  <button
+                    disabled={pending}
+                    onClick={() => {
+                      setActionError("");
+                      setToPurge(visibleProjects);
+                    }}
+                  >
+                    <Trash2 size={15} /> Vaciar papelera
+                  </button>
+                )}
                 {!showTrash && newProjectButton}
               </div>
             )}
@@ -603,11 +771,12 @@ function App({
                   {notice}
                 </p>
               )}
-              {actionError && !toDelete && (
+              {actionError && !toDelete && !toPurge && (
                 <p className="error" role="alert">
                   {actionError}
                 </p>
               )}
+              <UsageBar usage={usage} />
               <div className="project-list">
                 {visibleProjects.map((p) => (
                   <section className="panel" key={p.id}>
@@ -619,15 +788,28 @@ function App({
                     <p>{p.description || p.kind}</p>
                     <small>
                       {p.location || p.kind} · {dateLabel(p.created)}
+                      {usage?.projects[p.id] !== undefined &&
+                        " · " + bytesLabel(usage.projects[p.id])}
                     </small>
                     <div className="actions">
                       {showTrash ? (
-                        <button
-                          disabled={pending}
-                          onClick={() => changeProjectVisibility(p)}
-                        >
-                          <Undo2 size={15} /> Restaurar
-                        </button>
+                        <>
+                          <button
+                            disabled={pending}
+                            onClick={() => changeProjectVisibility(p)}
+                          >
+                            <Undo2 size={15} /> Restaurar
+                          </button>
+                          <button
+                            disabled={pending}
+                            onClick={() => {
+                              setActionError("");
+                              setToPurge([p]);
+                            }}
+                          >
+                            <Trash2 size={15} /> Eliminar definitivamente
+                          </button>
+                        </>
                       ) : (
                         <>
                           <button
@@ -717,6 +899,45 @@ function App({
             }
           }}
         />
+      )}
+      {toPurge && (
+        <Modal title="Eliminar definitivamente" close={closePurgeDialog}>
+          <p>
+            {toPurge.length === 1 ? (
+              <>
+                ¿Eliminar <strong>«{toPurge[0].name}»</strong> para siempre?
+              </>
+            ) : (
+              <>¿Eliminar para siempre los {toPurge.length} proyectos de la papelera?</>
+            )}{" "}
+            Se borrarán sus tablas, archivos originales, cronograma y reportes.{" "}
+            <strong>No se puede deshacer.</strong>
+          </p>
+          {toPurge.length > 1 && (
+            <ul>
+              {toPurge.map((p) => (
+                <li key={p.id}>{p.name}</li>
+              ))}
+            </ul>
+          )}
+          {actionError && (
+            <p className="error" role="alert">
+              {actionError}
+            </p>
+          )}
+          <div className="actions">
+            <button autoFocus disabled={pending} onClick={closePurgeDialog}>
+              Cancelar
+            </button>
+            <button
+              className="danger"
+              disabled={pending}
+              onClick={() => purgeProjects(toPurge)}
+            >
+              Eliminar definitivamente
+            </button>
+          </div>
+        </Modal>
       )}
       {toDelete && (
         <Modal title="Borrar proyecto" close={closeDeleteDialog}>

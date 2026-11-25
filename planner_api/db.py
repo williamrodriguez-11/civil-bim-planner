@@ -1,11 +1,14 @@
+import atexit
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
 from dotenv import dotenv_values
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / ".civil-bim" / "planner.sqlite3"
 SCHEMA = """
@@ -54,6 +57,11 @@ CREATE TABLE IF NOT EXISTS template(
 CREATE TABLE IF NOT EXISTS event(
  id INTEGER PRIMARY KEY, project INTEGER NOT NULL REFERENCES project(id),
  message TEXT NOT NULL, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS event_project ON event(project, id);
+CREATE INDEX IF NOT EXISTS report_project ON report(project);
+CREATE INDEX IF NOT EXISTS session_account ON session(account_id);
+CREATE INDEX IF NOT EXISTS session_expires ON session(expires);
+CREATE INDEX IF NOT EXISTS auth_attempt_until ON auth_attempt(until);
 """
 
 
@@ -70,6 +78,45 @@ def database_url():
     return local_settings.get("DATABASE_URL")
 
 
+_pools = {}
+_pools_lock = threading.Lock()
+
+
+def pool(url):
+    """Reuse a few open connections instead of opening one per query.
+
+    Idle connections close after four minutes so Neon can still suspend the
+    database when nobody is using the site.
+    """
+    with _pools_lock:
+        if url not in _pools:
+            _pools[url] = ConnectionPool(
+                url,
+                min_size=0,
+                max_size=int(os.environ.get("CIVIL_BIM_DB_POOL", "5")),
+                max_idle=240,
+                timeout=30,
+                check=ConnectionPool.check_connection,
+                kwargs={
+                    "row_factory": dict_row,
+                    "connect_timeout": 15,
+                    "prepare_threshold": None,
+                },
+                name="civil-bim",
+            )
+        return _pools[url]
+
+
+def close_pools():
+    with _pools_lock:
+        for opened in _pools.values():
+            opened.close()
+        _pools.clear()
+
+
+atexit.register(close_pools)
+
+
 class PostgresConnection:
     def __init__(self, connection):
         self.connection = connection
@@ -83,9 +130,7 @@ def connect(write=False, project=None):
     """Open a transaction. Writes to one project only wait for writes to that project."""
     url = database_url()
     if url:
-        with psycopg.connect(
-            url, row_factory=dict_row, connect_timeout=15, prepare_threshold=None
-        ) as pg:
+        with pool(url).connection() as pg:
             if write and project is not None:
                 # Serialize revision checks and updates per project. The two-key
                 # lock space does not overlap the single-key lock below.

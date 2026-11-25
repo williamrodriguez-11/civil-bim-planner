@@ -1,38 +1,75 @@
 # CIVIL BIM Planner
 
-La plataforma web local reúne las tablas de Revit, las cantidades verificadas y el cronograma en una ficha por proyecto. React y TypeScript gestionan la interacción. FastAPI aplica las reglas de ingeniería en Python y SQLite conserva los resultados y los archivos originales. La versión Streamlit previa a la migración tiene el respaldo Git `e764ab0`.
+Plataforma web que reúne las tablas de Revit, las cantidades verificadas y el cronograma de obra en una ficha por proyecto. Cada persona entra con su propia cuenta y solo ve sus proyectos.
 
-## Abrir la plataforma
+- **Interfaz:** React y TypeScript (`web/`).
+- **API y reglas de ingeniería:** FastAPI en Python (`planner_api/` y `bim_planner/`).
+- **Datos:** PostgreSQL en Neon para la versión publicada; SQLite para trabajar en un equipo sin conexión.
 
-La plataforma solicita una cuenta personal. Desde **Crear una cuenta**, elige un nombre de usuario y una contraseña de al menos 12 caracteres. Al volver desde cualquier equipo, usa la misma cuenta en la misma instalación.
+## Cómo está publicada
 
-### Publicación en internet
+```
+GitHub (rama main)  →  Render (servicio web con Docker)  →  Neon (PostgreSQL)
+```
 
-#### Acceso con Google, Apple y Microsoft
+1. El código vive en GitHub. Al fusionar cambios en `main`, Render vuelve a construir y desplegar el servicio si tiene activado el despliegue automático; si no, se despliega desde el panel de Render con **Manual Deploy**.
+2. Render construye el `Dockerfile`: compila la interfaz con Node, instala Python y arranca FastAPI, que sirve la interfaz y la API desde la misma dirección.
+3. FastAPI guarda en Neon las cuentas, sesiones, proyectos, archivos originales importados, cronogramas y reportes Excel. Al arrancar crea las tablas que falten (`planner_api/postgres.sql`); no hace falta ejecutar migraciones a mano.
 
-Cada proveedor usa una aplicación web registrada por el administrador. En Render configura `OAUTH_SESSION_SECRET` con un secreto aleatorio estable de al menos 32 bytes. Para cada proveedor habilitado, añade el par de variables indicado a continuación y registra su URL de retorno exacta.
+### Variables de entorno en Render
 
-| Proveedor | Variables en Render | URL de retorno |
+| Variable | Obligatoria | Valor |
 | --- | --- | --- |
-| Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `https://civil-bim-planner.onrender.com/api/auth/social/google/callback` |
-| Apple | `APPLE_CLIENT_ID`, `APPLE_CLIENT_SECRET` | `https://civil-bim-planner.onrender.com/api/auth/social/apple/callback` |
-| Microsoft | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` | `https://civil-bim-planner.onrender.com/api/auth/social/microsoft/callback` |
+| `DATABASE_URL` | Sí | Cadena de conexión **agrupada** (pooled) de Neon. Si falta, la app usaría SQLite dentro del contenedor y los datos se perderían en cada despliegue. |
+| `CIVIL_BIM_ADMIN` | No | Tu nombre de usuario. Esa cuenta ve en **Proyectos** cuánto ocupa la base de datos compartida respecto del límite del plan. |
+| `CIVIL_BIM_STORAGE_LIMIT_MB` | No | Límite de almacenamiento del plan de la base, en MB. Por defecto 512 (Neon Free). Cámbialo si amplías el plan. |
+| `CIVIL_BIM_HOST` | No | Dominio público, solo si usas un dominio propio. Render ya informa `RENDER_EXTERNAL_HOSTNAME` automáticamente. |
+| `CIVIL_BIM_DB_POOL` | No | Conexiones abiertas como máximo hacia la base. Por defecto 5. |
 
-Google requiere un cliente OAuth de tipo aplicación web. Apple usa el Services ID y un secreto JWT firmado por el equipo de Apple Developer que debe renovarse antes de vencer. Para Microsoft, registra una aplicación web que admita cuentas personales. Para usar exclusivamente las cuentas de una organización, configura también `MICROSOFT_TENANT_ID` con su UUID. Guarda los cambios en Render y vuelve a desplegar.
+El `Dockerfile` ya configura Uvicorn para confiar en el proxy de Render (`--proxy-headers` y `FORWARDED_ALLOW_IPS`), de modo que cada visitante se identifica por su propia dirección.
 
-El primer acceso con cada identidad crea un espacio propio. Para regresar a los mismos proyectos, usa siempre el mismo método y cuenta. Registrar un correo como usuario y autenticarlo con un proveedor son identidades independientes.
+No hace falta un disco persistente en Render: con `DATABASE_URL` definido, todo se guarda en Neon.
 
-Para Render Free con Neon, selecciona Docker y configura `DATABASE_URL` en las variables del servicio con la conexión agrupada de Neon. La app crea sus tablas en PostgreSQL al arrancar y guarda allí los proyectos y los archivos. Para desarrollo, la CLI de Neon guarda la misma variable en `.env.local`, excluido de Git. La base SQLite anterior sigue disponible indicando su ruta en `CIVIL_BIM_DB` y dejando sin definir la variable de entorno `DATABASE_URL`.
+La app reutiliza hasta cinco conexiones con Neon en lugar de abrir una por consulta. Las que quedan sin uso se cierran a los cuatro minutos, para que Neon pueda suspenderse cuando nadie usa la página. Conviene que el servicio de Render y la base de Neon estén en la misma región.
 
-El `Dockerfile` compila la interfaz y ejecuta FastAPI. En Render, crea un servicio web desde el repositorio con el runtime Docker y un disco persistente montado en `/var/data`. La base SQLite guarda allí las cuentas, proyectos y archivos. Usa una sola instancia y comparte la URL HTTPS del servicio. Render suministra el nombre del host automáticamente. En otro proveedor, configura `CIVIL_BIM_HOST` con el dominio público exacto, habilita HTTPS y monta un volumen persistente en la misma ruta.
+### Límites del plan gratuito
 
-Los proyectos creados antes de incorporar cuentas se conservan sin propietario. Para recuperarlos en tu instalación, crea tu cuenta y ejecuta desde la consola del servidor `python -m planner_api.claim_legacy TU_USUARIO` sobre la base correspondiente. El comando asigna los proyectos antiguos pendientes a la cuenta indicada.
+- **Render Free** suspende el servicio tras unos 15 minutos sin visitas. La siguiente visita tarda alrededor de un minuto en responder mientras se reactiva. La memoria es de 512 MB, por eso la app limita a dos los cálculos de contraseña simultáneos.
+- **Neon Free** ofrece 0,5 GB de almacenamiento compartido por todos los usuarios y suspende la base cuando no se usa; la primera consulta tras la pausa tarda un poco más. Los archivos importados (hasta 16 MiB cada uno) y los reportes Excel se guardan dentro de la base, así que son lo que más espacio ocupa.
 
-### Ejecución en tu equipo
+### Espacio de almacenamiento
 
-En el equipo preparado, ejecuta **Iniciar CIVIL BIM Planner.cmd** y abre [la aplicación local](http://127.0.0.1:8765). El mismo proceso sirve la interfaz compilada y la API. Para detenerlo, pulsa Ctrl+C en su terminal.
+No hay cuota por usuario: nadie queda bloqueado mientras quede espacio en la base. Para que no se llene:
 
-Para instalar la edición web en otro equipo Windows con Python 3.13 y Node 24:
+- **Proyectos** muestra cuánto ocupan los proyectos de cada cuenta, sus reportes y su papelera.
+- Las papeleras de proyectos y de tablas permiten **Eliminar definitivamente** un elemento o **Vaciar papelera**. Hasta entonces, lo enviado a la papelera sigue ocupando espacio. Eliminar no se puede deshacer.
+- Cada reporte del historial se puede eliminar; las tablas y cantidades no cambian.
+- Cuando la base supera el 70 % de `CIVIL_BIM_STORAGE_LIMIT_MB`, el servidor escribe un aviso en el registro de Render («La base de datos usa…») al arrancar, al importar y al generar reportes. La cuenta de `CIVIL_BIM_ADMIN` ve además la barra en rojo.
+
+Si el aviso aparece aunque las papeleras estén vacías, amplía el plan de Neon y ajusta `CIVIL_BIM_STORAGE_LIMIT_MB`, o traslada los archivos a un almacenamiento de objetos.
+
+## Cuentas y seguridad
+
+- Desde **Crear una cuenta** se elige un correo o nombre de usuario y una contraseña de 12 a 256 caracteres. La misma cuenta funciona desde cualquier equipo.
+- Las contraseñas se guardan con scrypt y una sal aleatoria; la sesión dura 14 días en una cookie `HttpOnly` y `Secure`.
+- Cada dirección admite 60 intentos de acceso o registro cada 10 minutos, y cada cuenta 20 intentos de inicio de sesión en el mismo periodo. Al superarlos, la página pide esperar diez minutos.
+- Por ahora no hay cambio ni recuperación de contraseña desde la interfaz.
+
+Los proyectos creados antes de que existieran las cuentas quedaron sin propietario. Para asignarlos a una cuenta, ejecuta en el servidor con la misma `DATABASE_URL` (o `CIVIL_BIM_DB`):
+
+```
+python -m planner_api.claim_legacy TU_USUARIO
+```
+
+### Acceso con Google, Apple y Microsoft (desactivado)
+
+El formulario de acceso ya no muestra estos botones. El código del servidor (`planner_api/social.py`) se conserva y solo se activa si se definen `OAUTH_SESSION_SECRET` y el par `<PROVEEDOR>_CLIENT_ID` / `<PROVEEDOR>_CLIENT_SECRET`. Para volver a ofrecerlo habría que restaurar los botones en `web/src/Account.tsx` y registrar la URL de retorno `https://<tu-dominio>/api/auth/social/<proveedor>/callback` en cada proveedor.
+
+## Ejecución en tu equipo
+
+En el equipo preparado, ejecuta **Iniciar CIVIL BIM Planner.cmd** y abre [la aplicación local](http://127.0.0.1:8765). Para detenerla, pulsa Ctrl+C en su terminal.
+
+Para preparar otro equipo Windows con Python 3.13 y Node 24:
 
 ```powershell
 py -3.13 -m venv .venv-web
@@ -42,89 +79,43 @@ npm.cmd --prefix web run build
 .\.venv-web\Scripts\python.exe -m uvicorn planner_api.main:app --host 127.0.0.1 --port 8765
 ```
 
-El archivo `.civil-bim/planner.sqlite3` contiene proyectos, archivos originales, opciones de lectura, plantillas, mediciones, cronogramas y versiones de reportes. Para respaldar tus datos, detén el servidor y copia esa carpeta. Git conserva el código por separado. La variable `CIVIL_BIM_DB` permite usar otra base. Las pruebas utilizan bases sintéticas independientes.
+La base de datos local se elige así:
+
+1. Si existe la variable de entorno `DATABASE_URL`, se usa ese PostgreSQL.
+2. Si no, y existe `CIVIL_BIM_DB`, se usa ese archivo SQLite.
+3. Si no, se lee `DATABASE_URL` de `.env.local` (lo crea la CLI de Neon y está excluido de Git). Ten en cuenta que entonces trabajas sobre la **misma base que la página publicada**.
+4. Si nada de lo anterior existe, se usa `.civil-bim/planner.sqlite3`. Para respaldarla, detén el servidor y copia esa carpeta.
+
+Para desarrollar la interfaz con recarga automática, ejecuta `npm.cmd --prefix web run dev` con la API activa en el puerto 8765. La API documenta su contrato en [/docs](http://127.0.0.1:8765/docs).
 
 ## Primer proyecto
 
 1. Crea la ficha desde **Resumen**. Puedes cambiar de proyecto en la barra superior.
-2. En **Tablas de origen**, selecciona uno o varios archivos. Revisa la vista previa de cada uno, la hoja, el encabezado y la codificación. Cada importación admite 16 MiB y 600 000 celdas. XLS utiliza xlrd y XLSX utiliza openpyxl.
+2. En **Tablas de origen**, selecciona uno o varios archivos CSV, TXT, TSV, XLS o XLSX. Revisa la vista previa de cada uno, la hoja, el encabezado y la codificación. Cada importación admite 16 MiB y 600 000 celdas.
 3. Guarda la tabla y asigna sus campos. **Volumen de origen** lee la medición exportada. **Inventario** permite contar elementos y seleccionar mediciones disponibles de masa, longitud, área y volumen. Para una tabla mixta, indica el campo que contiene la categoría. **Dimensiones** aplica las geometrías descritas más abajo. Declara las unidades antes de calcular.
 4. Selecciona familia, tipo, material y resistencia cuando existan. En las opciones adicionales puedes conservar otros atributos, excluir registros por su fila, filtrar por campo y guardar una plantilla. El original se puede descargar incluso después de ajustar la importación.
-5. Consulta **Cuantificación** para revisar subtotales, detalle e incidencias. Una celda vacía señala una magnitud sin medir. En **Reportes**, genera un libro Excel que conserve esa revisión. Los informes archivados siguen disponibles tras modificar la tabla.
-6. En **Programación**, define el inicio del proyecto, los días laborables y los festivos. Un código EDT como `1.2.1` crea una actividad dentro de una fase y un capítulo. Asigna sus nombres y configura duración, restricciones de fecha, predecesoras, desfases y porcentaje ejecutado. Se admiten FS, SS, FF y SF.
+5. Consulta **Cuantificación** para revisar subtotales, detalle e incidencias. Una celda vacía señala una magnitud sin medir. En **Reportes**, elige tablas y secciones y genera un libro Excel. Los informes archivados siguen disponibles tras modificar la tabla.
+6. En **Programación**, define el inicio del proyecto, los días laborables y los festivos. Un código EDT como `1.2.1` crea una actividad dentro de una fase y un capítulo. Asigna sus nombres y configura duración, restricciones de fecha, predecesoras, desfases y porcentaje ejecutado.
 7. Puedes vincular una actividad a una tabla, una categoría y un nivel. Ingresa el rendimiento en unidades por día. La duración se obtiene redondeando hacia arriba el cociente entre la cantidad válida y el rendimiento. Una modificación incompatible con fechas fijas o mediciones vinculadas se rechaza y conserva la revisión anterior.
 
-El cronograma trabaja en días laborables enteros. El intercambio XML representa cada jornada con ocho horas de trabajo. La holgura se calcula recorriendo la red de precedencias hacia atrás. El avance planificado se distribuye linealmente entre las fechas de cada actividad y el indicador global pondera el avance real por duración.
+Si dos ventanas modifican el mismo proyecto, la segunda recibe un aviso para actualizar los datos antes de guardar. Guardar en un proyecto no bloquea a los demás.
 
 ### Seguimiento del cronograma
 
+El cronograma trabaja en días laborables enteros. La holgura se calcula recorriendo la red de precedencias hacia atrás. El avance planificado se distribuye linealmente entre las fechas de cada actividad y el indicador global pondera el avance real por duración.
+
 La tabla de actividades y el Gantt comparten filas. Selecciona el nombre o la barra para editar. **Más columnas** muestra el porcentaje previsto, la holgura y la cantidad BIM. El buscador acepta nombres o códigos EDT; el filtro de ruta crítica y la escala permiten revisar la red.
 
-- **% completado** reemplaza la etiqueta «Avance real»: es el porcentaje registrado por el usuario, entre 0 y 100. No se calcula a partir del tiempo transcurrido ni de la cantidad BIM.
-- **% previsto** es la proporción de días laborables transcurridos al cierre de la fecha de seguimiento, respecto de la duración vigente. No representa una línea base. En **Calendario y seguimiento** puede fijarse una fecha de corte; vacía utiliza la fecha actual del servidor. Cambiarla no mueve las actividades ni altera el progreso registrado.
-- **No comenzar antes del** establece el comienzo más temprano permitido. **Debe finalizar el** fija una fecha obligatoria de fin, que debe ser laborable y compatible con la duración y las dependencias. Ambas restricciones son opcionales.
-- Las relaciones se muestran en español: **FC** (FS), **CC** (SS), **FF** (FF) y **CF** (SF). Un desfase positivo espera días laborables; uno negativo adelanta el vínculo. Los datos y el XML mantienen los códigos compatibles existentes.
+- **% completado** es el porcentaje registrado por el usuario, entre 0 y 100. No se calcula a partir del tiempo transcurrido ni de la cantidad BIM.
+- **% previsto** es la proporción de días laborables transcurridos al cierre de la fecha de seguimiento, respecto de la duración vigente. No representa una línea base. En **Calendario y seguimiento** puede fijarse una fecha de corte; vacía utiliza la fecha actual del servidor.
+- **No comenzar antes del** establece el comienzo más temprano permitido. **Debe finalizar el** fija una fecha obligatoria de fin, que debe ser laborable y compatible con la duración y las dependencias.
+- Las relaciones se muestran en español: **FC** (FS), **CC** (SS), **FF** (FF) y **CF** (SF). Un desfase positivo espera días laborables; uno negativo adelanta el vínculo.
 
-Los proyectos previos conservan su programación. El XML incluye la fecha de seguimiento cuando está fijada. La interfaz adopta términos y una disposición familiar de Project; todavía no incluye recursos, nivelación, líneas base ni reprogramación de trabajo restante.
+El cronograma se exporta como XML de Microsoft Project (MSPDI), con ocho horas por jornada y la fecha de seguimiento cuando está fijada. Todavía no incluye recursos, nivelación, líneas base ni reprogramación del trabajo restante.
 
-## Registro de implementación y verificación
+## Métodos de cuantificación
 
-| Fase | Comportamiento disponible | Comprobación |
-| --- | --- | --- |
-| 1–3 | Respaldo, interfaz web adaptable, modo oscuro y proyectos persistentes | Compilación TypeScript, navegador Edge, recarga y reapertura de la base |
-| 4–5 | Importación flexible, plantillas, clasificación, exclusiones, unidades y mediciones derivadas | Pruebas de texto regional, libros XLS/XLSX, categorías mixtas, inventario y geometrías |
-| 6 | Indicadores, agrupación, trazabilidad e historial de Excel | Reapertura del XLSX y cotejo de sus hojas, fuentes y totales |
-| 7–8 | EDT, Gantt editable, CPM, calendarios, vínculos a cantidades y XML MSPDI | Pruebas de ciclos, relaciones, fechas, holguras y recálculo por rendimiento |
-| 9 | Regresión e integración con datos sintéticos | Los cuatro ejemplos conservan 10 elementos y 36,400 m³. En Edge, una tabla de 15 m³ produce una actividad de 3 días a 5 m³/día |
-| 10 | Paquete frontend compilable y arranque local desde FastAPI | Servidor de bucle local. Un despliegue compartido requerirá configurar acceso, permisos y copias de seguridad |
-
-La validación de intercambio utilizó el XSD del SDK de Microsoft Project y una lectura independiente con MPXJ 16.10.0. Se recuperaron cuatro actividades bajo tres grupos EDT, sus fechas, un festivo y las cuatro clases de relación con sus desfases. Queda pendiente la apertura directa en Microsoft Project de escritorio, cuya automatización COM devolvió `0x80080005`. Los reportes PDF y las pruebas de carga con archivos reales de obra quedan para una fase posterior. [SDK oficial](https://www.microsoft.com/en-us/download/details.aspx?id=30435).
-
-Para reproducir las pruebas en Windows con Microsoft Edge instalado:
-
-```powershell
-.\.venv-web\Scripts\python.exe -m pip install -r requirements-web-test.txt
-.\.venv-web\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv-web\Scripts\python.exe -m unittest discover -s tests_web -v
-Set-Location web
-npm.cmd run build
-.\node_modules\.bin\playwright.cmd test
-```
-
-La API local expone su contrato en [la documentación interactiva](http://127.0.0.1:8765/docs). Para desarrollar la interfaz con recarga automática, ejecuta `npm.cmd --prefix web run dev` con la API activa en el puerto 8765.
-
-## Edición original de Streamlit
-
-Aplicación local en Streamlit para cuantificar tablas de Revit por categoría y nivel. El módulo de programación de obra se conserva como punto de entrada para el futuro cronograma Gantt.
-
-## Ejecutar en Windows
-
-Desde la carpeta del proyecto, en PowerShell:
-
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
-
-Las dependencias instaladas se documentan en `requirements.txt`. Para preparar otro entorno con Python 3.13:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-## Cuantificación
-
-1. Abre **Cuantificación BIM** y carga una tabla en cada categoría que necesites: columnas, vigas, losas o muros. Se admite una tabla por categoría; consolida tablas adicionales antes de cargarlas.
-2. Usa CSV, TXT o TSV exportados desde Revit, o un XLSX con una hoja tabular. No se leen archivos RVT, IFC ni XLS antiguos. Para textos se detectan UTF-8, UTF-16 con BOM y CP1252; puedes seleccionar explícitamente codificación y separador. Para XLSX selecciona la hoja.
-3. Si hay un título antes de los campos, ajusta la **fila de encabezados**, numerada desde 1. Cada columna debe tener un nombre único y no vacío. Se conservan los números de fila para revisar incidencias. En texto con saltos dentro de campos entrecomillados, el número corresponde al registro, no a la línea física.
-4. Revisa la vista previa. Excluye filas de títulos, unidades, subtotales o totales. Si la tabla mezcla categorías, selecciona el campo de categoría y los valores que deben incluirse. No cargues los mismos elementos en más de una categoría.
-5. Asigna el **nivel**, familia/tipo, ID y cantidad según estén disponibles. Los nombres habituales se sugieren, pero deben revisarse. Sin campo de cantidad, una fila equivale a un elemento. Las tablas agrupadas requieren su campo de cantidad si representan varios elementos.
-6. Selecciona método, separador decimal y unidades de cada magnitud. Los números reales de Excel conservan su valor sin depender del separador decimal; los textos se interpretan según la configuración. Las unidades anexas, como `1,25 m³`, deben coincidir con la unidad seleccionada. No se infieren unidades del encabezado.
-7. Revisa el resumen y las incidencias. Puedes filtrar los niveles en pantalla. Descarga el Excel: siempre incluye **todos los niveles**, con los filtros de origen y exclusiones aplicados.
-
-### Métodos y supuestos
-
-**Volumen de Revit:** requiere nivel y volumen. El área es opcional. Selecciona **El total de la fila** para mediciones ya agregadas, o **Un elemento** para multiplicar volumen y área por la cantidad. La misma base se aplica a ambas mediciones: verifica cómo están configuradas en Revit. No se multiplica un total de fila de nuevo.
+**Volumen de origen:** requiere nivel y volumen; el área es opcional. Selecciona **El total de la fila** para mediciones ya agregadas, o **Un elemento** para multiplicar volumen y área por la cantidad. La misma base se aplica a ambas mediciones: verifica cómo están configuradas en Revit.
 
 **Dimensiones:** todas las dimensiones y áreas de entrada son por elemento. El volumen calculado se multiplica por la cantidad:
 
@@ -135,40 +126,54 @@ python -m venv .venv
 | Losas | Área, espesor | Área × espesor | Área en planta |
 | Muros | Longitud, altura, espesor | Longitud × altura × espesor | Una cara bruta: longitud × altura |
 
-La aproximación dimensional supone secciones rectangulares y espesor constante, sin descuentos por huecos, uniones o solapes. Para geometrías irregulares o cantidades netas usa los valores de Revit. No se calcula acero, encofrado, desperdicio ni costos. Los resultados son cantidades según la tabla y la configuración del usuario.
+La aproximación dimensional supone secciones rectangulares y espesor constante, sin descuentos por huecos, uniones o solapes. Para geometrías irregulares o cantidades netas usa los valores de Revit. No se calcula acero, encofrado, desperdicio ni costos.
 
-Cada elemento se asigna íntegramente al nivel indicado: no se divide automáticamente entre pisos. Las etiquetas de nivel solo se limpian de espacios externos; `N1` y `Nivel 1` siguen siendo niveles distintos. Los niveles se ordenan por nombre, no por elevación.
-
-Las salidas se expresan en m³, m² y unidades. Los cálculos conservan precisión; el reporte muestra tres decimales. Las áreas no se suman globalmente entre categorías, porque pueden representar superficies diferentes. Un área vacía significa **no cuantificada**, no cero.
+Cada elemento se asigna íntegramente al nivel indicado. Las etiquetas de nivel solo se limpian de espacios externos: `N1` y `Nivel 1` son niveles distintos. Los niveles se ordenan por nombre, no por elevación. Las áreas no se suman entre categorías, porque pueden representar superficies diferentes; un área vacía significa **no cuantificada**, no cero.
 
 ### Validación y trazabilidad
 
-- Se rechazan filas con nivel vacío, valores numéricos inválidos, negativos, no finitos o cantidades no enteras/menores que 1. Un volumen cero sí es válido.
-- Los IDs duplicados dentro de la categoría cargada se rechazan en todas sus apariciones; excluye la fila duplicada o corrige la fuente. Los IDs son opcionales; sin ellos no se puede detectar repetición de elementos de forma fiable.
-- Se detectan etiquetas habituales de total/subtotal en los campos asignados de nivel, tipo e ID. Revisa también la vista previa: no todos los formatos de subtotales pueden identificarse automáticamente.
-- Las filas inválidas no se convierten en cero. Se muestran y exportan con el motivo y la fila de origen. Si hay filas rechazadas, el reporte se identifica en pantalla como parcial.
-- El Excel contiene resumen por categoría/nivel, detalle, incidencias, configuración, fuentes importadas y criterios. Se genera en memoria y se descarga localmente. Los valores fuente que parecen fórmulas se guardan como texto.
-- Para XLSX con fórmulas, guarda el libro recalculado en Excel antes de importar; se leen sus valores almacenados.
-- Las cargas y configuraciones viven en la sesión de Streamlit; no hay base de datos ni guardado permanente de proyectos. Cambiar un archivo o su estructura reinicia los controles asociados. No hay publicación ni envío externo de tablas.
+- Se rechazan filas con nivel vacío, valores numéricos inválidos, negativos o no finitos, y cantidades no enteras o menores que 1. Un volumen cero sí es válido.
+- Los IDs duplicados se rechazan en todas sus apariciones, también entre tablas de la misma categoría del proyecto.
+- Se detectan etiquetas habituales de total y subtotal en los campos de nivel, tipo e ID. Revisa también la vista previa: no todos los formatos pueden identificarse automáticamente.
+- Las filas inválidas no se convierten en cero: se muestran y exportan con el motivo y la fila de origen, y el reporte se marca como parcial.
+- Los números de Excel conservan su valor; los textos se interpretan con el separador decimal elegido. Las unidades anexas, como `1,25 m³`, deben coincidir con la unidad seleccionada.
+- Para XLSX con fórmulas, guarda el libro recalculado en Excel antes de importar; se leen los valores almacenados.
 
-## Ejemplos y pruebas
+## Pruebas
 
-`examples/` contiene cuatro tablas sintéticas pequeñas con separador `;`, decimal `,`, longitudes en m, áreas en m² y volúmenes en m³. Cada fila tiene mediciones totales en modo directo. Las dimensiones también permiten reproducirlas: volumen total **36,400 m³**, **10 elementos**, repartidos en dos niveles. No son datos de un proyecto real.
+`examples/` contiene cuatro tablas sintéticas (separador `;`, decimal `,`) con **10 elementos** y **36,400 m³** en dos niveles. No son datos de un proyecto real.
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv-web\Scripts\python.exe -m pip install -r requirements-web-test.txt
+.\.venv-web\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv-web\Scripts\python.exe -m unittest discover -s tests_web -v
+Set-Location web
+npm.cmd run build
+.\node_modules\.bin\playwright.cmd test
 ```
 
-Se verifican importación UTF-16/CP1252/XLSX, formatos regionales, unidades, las cuatro geometrías, cantidades agrupadas, exclusiones, duplicados, errores, exportación y navegación/configuración de Streamlit. Las pruebas de interfaz usan `AppTest` con cargas de archivos sintéticos, cambios de controles y exportación real en memoria.
+- `tests/`: importación, formatos regionales, unidades, geometrías, exclusiones, duplicados y exportación.
+- `tests_web/`: API, cuentas y aislamiento entre ellas, límites de acceso, papelera y eliminación definitiva, espacio usado, reportes, cronograma y XML. Usan bases SQLite sintéticas.
+- `web/e2e/`: recorridos en navegador con Playwright.
 
-## Organización
+El XML se validó con el XSD del SDK de Microsoft Project y con MPXJ 16.10.0. Queda pendiente abrirlo directamente en Microsoft Project de escritorio.
 
-- `app.py`: punto de entrada y navegación.
-- `bim_planner/importer.py`: lectura y validación de tablas.
-- `bim_planner/quantities.py`: configuración, validación y cálculos, sin interfaz.
-- `bim_planner/exporter.py`: generación del reporte XLSX.
-- `bim_planner/ui.py`: controles y resultados de cuantificación.
-- `bim_planner/scheduling.py`: módulo conservado para programación de obra.
-- `tests/`: pruebas automatizadas.
+## Organización del código
 
-No se ha implementado todavía el Gantt, la persistencia de proyectos ni una conexión directa a la API de Revit.
+- `planner_api/main.py`: rutas de la API y servicio de la interfaz compilada.
+- `planner_api/auth.py`: cuentas, sesiones y límites de acceso.
+- `planner_api/db.py` y `postgres.sql`: conexión a PostgreSQL o SQLite y esquema.
+- `planner_api/tables.py`, `models.py`: importación, validación de datos y cálculo.
+- `planner_api/planning.py`, `project_xml.py`: ruta crítica y exportación a Project.
+- `planner_api/social.py`: acceso con proveedores externos (desactivado en la interfaz).
+- `bim_planner/`: motor de cuantificación compartido.
+- `web/src/`: pantallas de la interfaz (`Overview`, `Tables`, `Schedule`, `Account`).
+- `Dockerfile`: imagen que despliega Render.
+
+## Edición Streamlit anterior
+
+`app.py`, `bim_planner/ui.py` y `requirements.txt` corresponden a la primera versión local en Streamlit, sin cuentas ni guardado permanente. Se conserva como referencia y no forma parte de la página publicada. Para abrirla:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
