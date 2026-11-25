@@ -166,3 +166,36 @@ export const bytesLabel = (n: number) =>
     ? Math.max(n ? 1 : 0, Math.round(n / 1024)) + " KB"
     : (n / 1024 / 1024).toLocaleString("es-CO", { maximumFractionDigits: 1 }) +
       " MB";
+const elementWords: [string, RegExp][] = [
+  ["Columnas", /\b(columnas?|pilares?)\b/],
+  ["Vigas", /\bvigas?\b/],
+  ["Losas", /\b(losas?|placas? de entrepiso)\b/],
+  ["Muros", /\bmuros?\b/],
+  ["Zapatas", /\bzapatas?\b/],
+  ["Pilotes", /\bpilotes?\b/],
+  ["Escaleras", /\bescaleras?\b/],
+];
+/** Element named by a file or sheet, e.g. «CANT - COLUMNAS.csv» → Columnas. */
+export function elementFromName(...names: string[]) {
+  const text = names
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  const found = elementWords.filter(([, words]) => words.test(text));
+  return found.length === 1 ? found[0][0] : "";
+}
+/** Tables whose «category from a column» repeats the level of each row. */
+export function levelsAsCategories(state: State | null) {
+  return (state?.tables ?? []).filter((source) => {
+    const mapping = source.mapping;
+    const rows = state?.results[source.id]?.detail ?? [];
+    return (
+      !!mapping?.category_field &&
+      (mapping.category_field === mapping.fields.level ||
+        (rows.length > 0 &&
+          rows.every((r) => String(r.Categoría) === String(r.Nivel))))
+    );
+  });
+}

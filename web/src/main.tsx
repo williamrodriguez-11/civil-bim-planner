@@ -763,6 +763,7 @@ function App({
               projects={projects.length}
               go={go}
               create={() => setForm("new")}
+              mutate={mutate}
             />
           ) : page === "Proyectos" ? (
             <>

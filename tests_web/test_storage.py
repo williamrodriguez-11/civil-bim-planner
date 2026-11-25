@@ -132,6 +132,30 @@ class Storage(unittest.TestCase):
         self.assertEqual(self.client.get("/api/projects?include_deleted=true").json(), [])
         self.assertEqual(self.usage(), {"total": 0, "trash": 0, "reports": 0, "projects": {}})
 
+    def test_archived_issues_survive_a_category_correction(self):
+        sid = self.load("CANT - COLUMNAS.csv", b"N;V\nPB;2\nP1;x")
+        url = self.base + f"/tables/{sid}/mapping"
+        self.client.put(
+            url, json={**MAPPING, "category": "CANT - COLUMNAS.csv"}, headers=self.headers()
+        ).raise_for_status()
+        self.client.post(
+            self.base + f"/tables/{sid}/issue-archive",
+            json={"index": 0},
+            headers=self.headers(),
+        ).raise_for_status()
+        review = self.client.get(self.base).json()["issue_review"][str(sid)]
+        self.assertEqual((review["pending"], len(review["history"])), ([], 1))
+        archived_at = review["history"][0]["archived_at"]
+        self.client.put(
+            url, json={**MAPPING, "category": "Columnas"}, headers=self.headers()
+        ).raise_for_status()
+        state = self.client.get(self.base).json()
+        review = state["issue_review"][str(sid)]
+        self.assertEqual(review["pending"], [])
+        self.assertEqual(review["history"][0]["row"]["Categoría"], "Columnas")
+        self.assertEqual(review["history"][0]["archived_at"], archived_at)
+        self.assertTrue(review["history"][0]["current"])
+
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
         with TestClient(app) as admin:

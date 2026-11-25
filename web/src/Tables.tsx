@@ -11,6 +11,7 @@ import {
 import {
   api,
   cleanError,
+  elementFromName,
   type Mapping,
   type Mutation,
   type Options,
@@ -365,7 +366,7 @@ function Configure({
         ) ?? "";
     }
     return {
-      category: "",
+      category: elementFromName(source.name, source.sheet),
       mode:
         !fields.volume &&
         [fields.area, fields.length, fields.mass, fields.count].some(Boolean)
@@ -605,11 +606,30 @@ function Configure({
         )}
       </div>
       {mapping.category_field &&
-        mapping.category_field === mapping.fields.level && (
+        (mapping.category_field === mapping.fields.level ||
+          (mapping.category_field === source.mapping?.category_field &&
+            !!saved?.detail.length &&
+            saved.detail.every(
+              (r) => String(r.Categoría) === String(r.Nivel),
+            ))) && (
           <div className="notice tools">
-            <span>La categoría y el nivel usan la misma columna.</span>
-            <button onClick={() => change({ category_field: "" })}>
-              Usar la categoría escrita
+            <span>
+              La columna «{mapping.category_field}» contiene los niveles, no el
+              tipo de elemento. Cada piso aparecería como una categoría.
+            </span>
+            <button
+              onClick={() =>
+                change({
+                  category_field: "",
+                  category:
+                    mapping.category.trim() &&
+                    mapping.category !== source.name
+                      ? mapping.category
+                      : elementFromName(source.name, source.sheet),
+                })
+              }
+            >
+              Usar una sola categoría para la tabla
             </button>
           </div>
         )}

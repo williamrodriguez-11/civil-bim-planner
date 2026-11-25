@@ -623,6 +623,28 @@ class ScheduleTests(unittest.TestCase):
         )
         self.assertEqual(saved["issues"][0]["Fila origen"], 4)
 
+    def test_levels_are_not_accepted_as_categories(self):
+        from bim_planner.importer import read_table
+        from planner_api.models import Mapping
+        from planner_api.tables import calculate
+
+        data = b"Nivel;Nivel base;V\nSotano;Sotano;4\nPiso 1;Piso 1;2"
+        for column in ["Nivel", "Nivel base"]:
+            mapping = Mapping(
+                category="CANT - COLUMNAS.csv",
+                category_field=column,
+                mode="direct",
+                fields={"level": "Nivel", "volume": "V"},
+                units={"volume": "m³"},
+                direct_basis="row_total",
+                decimal=",",
+            )
+            with self.assertRaisesRegex(ValueError, "contiene los niveles"):
+                calculate(read_table(data, "columnas.csv"), mapping, "columnas.csv")
+        mapping = mapping.model_copy(update={"category": "Columnas", "category_field": ""})
+        saved = calculate(read_table(data, "columnas.csv"), mapping, "columnas.csv")
+        self.assertEqual({r["Categoría"] for r in saved["detail"]}, {"Columnas"})
+
     def test_inventory_units_attributes_and_unmeasured_volume(self):
         from bim_planner.importer import read_table
         from planner_api.models import Mapping
