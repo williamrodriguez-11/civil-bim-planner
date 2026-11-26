@@ -346,22 +346,30 @@ def purge_project(pid: int, revision: int = Header(alias="If-Match")):
 def backfill_category_warnings():
     """Check once the tables saved before the category warning existed."""
     try:
-        with connect(True) as db:
-            rows = db.execute(
-                # The original file is read only for tables that need it.
-                "SELECT id,name,options,mapping,result FROM source "
-                "WHERE mapping IS NOT NULL AND result IS NOT NULL "
-                "AND result NOT LIKE ?",
-                ('%"levels_as_category"%',),
-            ).fetchall()
-            for row in rows:
+        with connect() as db:
+            pending = [
+                dict(row)
+                for row in db.execute(
+                    # The original file is read only for tables that need it.
+                    "SELECT id,project,name,options,mapping,result FROM source "
+                    "WHERE mapping IS NOT NULL AND result IS NOT NULL"
+                )
+                if "levels_as_category" not in json.loads(row["result"])
+            ]
+        for row in pending:
+            with connect(True, project=row["project"]) as db:
                 result = json.loads(row["result"])
-                if "levels_as_category" in result:
-                    continue
                 result["levels_as_category"] = category_warning(db, row, result)
+                # Another instance may have saved the table meanwhile (for
+                # example during a deploy): only fill in an unchanged result.
                 db.execute(
-                    "UPDATE source SET result=? WHERE id=?",
-                    (json.dumps(result, allow_nan=False), row["id"]),
+                    "UPDATE source SET result=? WHERE id=? AND result=? AND mapping=?",
+                    (
+                        json.dumps(result, allow_nan=False),
+                        row["id"],
+                        row["result"],
+                        row["mapping"],
+                    ),
                 )
     except Exception:
         logger.exception("No se pudo revisar la categoría de las tablas anteriores.")

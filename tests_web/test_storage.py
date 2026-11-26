@@ -250,6 +250,29 @@ class Storage(unittest.TestCase):
             result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
         self.assertTrue(result["levels_as_category"])
 
+        # A table saved by another instance meanwhile is left untouched.
+        import planner_api.main as main
+
+        with connect(True) as db:
+            del result["levels_as_category"]
+            result["detail"][0]["Nota"] = "levels_as_category"  # A cell, not the flag.
+            db.execute("UPDATE source SET result=?", (json.dumps(result),))
+        newer = json.dumps({"detail": [], "issues": [], "levels_as_category": False})
+        original = main.category_warning
+
+        def concurrent_save(db, row, result):
+            # The row changes after the backfill read it.
+            db.execute("UPDATE source SET result=?", (newer,))
+            return original(db, row, result)
+
+        main.category_warning = concurrent_save
+        try:
+            backfill_category_warnings()
+        finally:
+            main.category_warning = original
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT result FROM source").fetchone()["result"], newer)
+
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
         with TestClient(app) as admin:
