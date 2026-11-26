@@ -364,7 +364,7 @@ def category_warning(db, row, result):
     if not mapping.category_field:
         return False
     # Results saved before this check: read that one source once to decide.
-    key = (row["id"], row["mapping"], row["options"])
+    key = (row["id"], row["digest"], row["name"], row["mapping"], row["options"])
     if key not in _legacy_warnings:
         found = db.execute("SELECT data FROM source WHERE id=?", (row["id"],)).fetchone()
         try:
@@ -383,11 +383,12 @@ def state(pid: int):
         data = results(db, pid)
         summaries = []
         for row in db.execute(
-            "SELECT id,name,options,sheet,created,mapping FROM source_catalog "
+            "SELECT id,name,options,sheet,created,mapping,digest FROM source_catalog "
             "WHERE project=? AND deleted_at IS NULL ORDER BY id",
             (pid,),
         ):
             summary = dict(row)
+            del summary["digest"]
             summary["mapping"] = json.loads(row["mapping"]) if row["mapping"] else None
             summary["options"] = json.loads(row["options"])
             summary["levels_as_category"] = category_warning(
