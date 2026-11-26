@@ -75,6 +75,8 @@ class Mapping(Input):
     family: str = ""
     attributes: list[str] = []
     category_field: str = ""
+    # The user confirmed that a separate category column may repeat the level.
+    category_confirmed: bool = False
 
 
 class Link(Input):

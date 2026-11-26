@@ -27,6 +27,7 @@ export interface Options {
 }
 export interface Mapping {
   category_field?: string;
+  category_confirmed?: boolean;
   attributes?: string[];
   category: string;
   fields: Record<string, string>;
@@ -48,6 +49,8 @@ export interface Source {
   sheet: string;
   options: Options;
   mapping: Mapping | null;
+  /** The server found that the category column repeats the level. */
+  levels_as_category?: boolean;
 }
 export interface Table {
   columns: string[];
@@ -186,16 +189,10 @@ export function elementFromName(...names: string[]) {
   const found = elementWords.filter(([, words]) => words.test(text));
   return found.length === 1 ? found[0][0] : "";
 }
-/** Tables whose «category from a column» repeats the level of each row. */
+/** Tables whose «category from a column» repeats the level of each row.
+ * The server compares every source row, including excluded and rejected ones. */
 export function levelsAsCategories(state: State | null) {
-  return (state?.tables ?? []).filter((source) => {
-    const mapping = source.mapping;
-    const rows = state?.results[source.id]?.detail ?? [];
-    return (
-      !!mapping?.category_field &&
-      (mapping.category_field === mapping.fields.level ||
-        (rows.length > 0 &&
-          rows.every((r) => String(r.Categoría) === String(r.Nivel))))
-    );
-  });
+  return (state?.tables ?? []).filter(
+    (source) => !!source.mapping && !!source.levels_as_category,
+  );
 }

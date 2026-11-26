@@ -58,10 +58,27 @@ function LevelCategoryFix({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const mapping = source.mapping!;
+  // A separate column may legitimately match the level (e.g. «Cimentación»).
+  const separateColumn =
+    !!mapping.category_field && mapping.category_field !== mapping.fields.level;
+  async function save(update: Partial<typeof mapping>) {
+    setBusy(true);
+    setError("");
+    try {
+      await mutate(
+        "/tables/" + source.id + "/mapping",
+        { ...mapping, ...update },
+        "PUT",
+      );
+    } catch (e) {
+      setError(cleanError(e));
+      setBusy(false);
+    }
+  }
   return (
     <div className="notice level-fix" role="status">
       <p>
-        La tabla <strong>«{source.name}»</strong> está usando los niveles
+        La tabla <strong>«{source.name}»</strong> parece usar los niveles
         {levels.length ? ` (${levels.slice(0, 3).join(", ")}${levels.length > 3 ? "…" : ""})` : ""}{" "}
         como si fueran categorías. Indica qué elemento contiene la tabla:
       </p>
@@ -75,23 +92,25 @@ function LevelCategoryFix({
         <button
           className="primary"
           disabled={busy || !category.trim()}
-          onClick={async () => {
-            setBusy(true);
-            setError("");
-            try {
-              await mutate(
-                "/tables/" + source.id + "/mapping",
-                { ...mapping, category: category.trim(), category_field: "" },
-                "PUT",
-              );
-            } catch (e) {
-              setError(cleanError(e));
-              setBusy(false);
-            }
-          }}
+          onClick={() =>
+            save({
+              category: category.trim(),
+              category_field: "",
+              category_confirmed: false,
+            })
+          }
         >
           Clasificar toda la tabla como {category.trim() || "…"}
         </button>
+        {separateColumn && (
+          <button
+            disabled={busy}
+            title={`La columna «${mapping.category_field}» sí indica el tipo de elemento`}
+            onClick={() => save({ category_confirmed: true })}
+          >
+            Es correcto, mantener
+          </button>
+        )}
       </div>
       {error && <p className="error">{error}</p>}
     </div>

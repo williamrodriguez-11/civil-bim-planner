@@ -37,6 +37,7 @@ from .tables import (
     calculate,
     identity,
     inspect_file,
+    levels_as_category,
     profile,
     read,
     suggest_header,
@@ -341,6 +342,39 @@ def purge_project(pid: int, revision: int = Header(alias="If-Match")):
     return {"id": pid}
 
 
+# Tables saved before the category warning existed are checked once per
+# process and per configuration, instead of on every page load.
+_legacy_warnings = {}
+
+
+def mapping_json(mapping: Mapping):
+    """Stored mapping. The confirmation is only written when given, so that an
+    older instance still running during a deploy can read the other tables."""
+    exclude = None if mapping.category_confirmed else {"category_confirmed"}
+    return mapping.model_dump_json(exclude=exclude)
+
+
+def category_warning(db, row, result):
+    """Whether this table's category column only repeats its levels."""
+    if not row["mapping"]:
+        return False
+    if result is not None and "levels_as_category" in result:
+        return result["levels_as_category"]
+    mapping = Mapping.model_validate_json(row["mapping"])
+    if not mapping.category_field:
+        return False
+    # Results saved before this check: read that one source once to decide.
+    key = (row["id"], row["digest"], row["name"], row["mapping"], row["options"])
+    if key not in _legacy_warnings:
+        found = db.execute("SELECT data FROM source WHERE id=?", (row["id"],)).fetchone()
+        try:
+            frame = read(found["data"], row["name"], Options.model_validate_json(row["options"]))
+            _legacy_warnings[key] = levels_as_category(frame, mapping)
+        except ValueError:
+            _legacy_warnings[key] = False
+    return _legacy_warnings[key]
+
+
 @project_routes.get("")
 def state(pid: int):
     with connect() as db:
@@ -349,13 +383,17 @@ def state(pid: int):
         data = results(db, pid)
         summaries = []
         for row in db.execute(
-            "SELECT id,name,options,sheet,created,mapping FROM source_catalog "
+            "SELECT id,name,options,sheet,created,mapping,digest FROM source_catalog "
             "WHERE project=? AND deleted_at IS NULL ORDER BY id",
             (pid,),
         ):
             summary = dict(row)
+            del summary["digest"]
             summary["mapping"] = json.loads(row["mapping"]) if row["mapping"] else None
             summary["options"] = json.loads(row["options"])
+            summary["levels_as_category"] = category_warning(
+                db, row, data.get(row["id"])
+            )
             summaries.append(summary)
         return {
             "project": p,
@@ -578,25 +616,27 @@ def revise_options(
         frame = read(row["data"], row["name"], options)
         _, sheet = identity(row["data"], options, sheets)
         result = None
+        mapping = None
         if row["mapping"]:
             mapping = Mapping.model_validate_json(row["mapping"])
-            if (
-                options.header_row
-                != Options.model_validate_json(row["options"]).header_row
-                or sheet != row["sheet"]
-            ):
+            previous = Options.model_validate_json(row["options"])
+            if options.header_row != previous.header_row or sheet != row["sheet"]:
                 if mapping.excluded_rows:
                     raise ValueError(
                         "Retira las exclusiones manuales antes de cambiar la hoja o la fila de encabezados."
                     )
+            if options != previous or sheet != row["sheet"]:
+                # A confirmed category column was checked on other values.
+                mapping = mapping.model_copy(update={"category_confirmed": False})
             result = calculate(frame, mapping, row["name"])
             validate_result(db, p, sid, result)
         try:
             db.execute(
-                "UPDATE source SET options=?,sheet=?,result=? WHERE id=?",
+                "UPDATE source SET options=?,sheet=?,mapping=?,result=? WHERE id=?",
                 (
                     options.model_dump_json(),
                     sheet,
+                    mapping_json(mapping) if mapping else None,
                     json.dumps(result) if result is not None else None,
                     sid,
                 ),
@@ -610,7 +650,7 @@ def revise_options(
         return {"id": sid}
 
 
-def carry_archived_issues(db, sid, issues):
+def carry_archived_issues(db, sid, previous, issues):
     """Keep archived issues archived when only their category label changed.
 
     Correcting a table's category (for example, levels used as categories)
@@ -620,12 +660,17 @@ def carry_archived_issues(db, sid, issues):
         return issue_snapshot({k: v for k, v in row.items() if k != "Categoría"})
 
     current = {key(row): issue_snapshot(row) for row in issues}
+    # Only incidences that were present just before this change keep their
+    # archive; an older archive must not hide a new rejection.
+    before = {issue_snapshot(row) for row in previous}
     for record in list(
         db.execute(
             "SELECT digest, issue, archived_at FROM issue_archive WHERE source=?",
             (sid,),
         )
     ):
+        if record["issue"] not in before:
+            continue
         snapshot = current.get(key(json.loads(record["issue"])))
         if snapshot is None or snapshot == record["issue"]:
             continue
@@ -671,6 +716,14 @@ def assign(
     with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         row = source(db, pid, sid)
+        if m.category_confirmed:
+            # A confirmation covers only the category/level pair it was given for.
+            stored = Mapping.model_validate_json(row["mapping"]) if row["mapping"] else None
+            if stored is None or (stored.category_field, stored.fields.get("level")) != (
+                m.category_field,
+                m.fields.get("level"),
+            ):
+                m = m.model_copy(update={"category_confirmed": False})
         frame = read(
             row["data"], row["name"], Options.model_validate_json(row["options"])
         )
@@ -678,9 +731,10 @@ def assign(
         validate_result(db, p, sid, result)
         db.execute(
             "UPDATE source SET mapping=?,result=? WHERE id=?",
-            (m.model_dump_json(), json.dumps(result, allow_nan=False), sid),
+            (mapping_json(m), json.dumps(result, allow_nan=False), sid),
         )
-        carry_archived_issues(db, sid, result["issues"])
+        previous = json.loads(row["result"])["issues"] if row["result"] else []
+        carry_archived_issues(db, sid, previous, result["issues"])
         if template.strip():
             db.execute(
                 "INSERT INTO template VALUES(?,?,?) ON CONFLICT(project,name) DO UPDATE SET mapping=excluded.mapping",
@@ -688,7 +742,13 @@ def assign(
                     pid,
                     template.strip(),
                     m.model_dump_json(
-                        exclude={"excluded_rows", "filter_values", "filter_column"}
+                        exclude={
+                            "excluded_rows",
+                            "filter_values",
+                            "filter_column",
+                            # Each table is checked on its own.
+                            "category_confirmed",
+                        }
                     ),
                 ),
             )
@@ -763,6 +823,7 @@ def report(
                         "family",
                         "attributes",
                         "category_field",
+                        "category_confirmed",
                     }
                 )
             )

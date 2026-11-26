@@ -156,6 +156,146 @@ class Storage(unittest.TestCase):
         self.assertEqual(review["history"][0]["archived_at"], archived_at)
         self.assertTrue(review["history"][0]["current"])
 
+    def test_old_archive_does_not_hide_a_new_rejection(self):
+        sid = self.load("columnas.csv", b"N;V;W\nPB;2;2\nP1;x;3")
+        url = self.base + f"/tables/{sid}/mapping"
+
+        def save(category, volume):
+            self.client.put(
+                url,
+                json={**MAPPING, "category": category, "fields": {"level": "N", "volume": volume}},
+                headers=self.headers(),
+            ).raise_for_status()
+
+        save("A", "V")
+        self.client.post(
+            self.base + f"/tables/{sid}/issue-archive", json={"index": 0}, headers=self.headers()
+        ).raise_for_status()
+        save("A", "W")  # Row 3 becomes valid: the incidence disappears.
+        save("B", "V")  # It comes back under another category.
+        review = self.client.get(self.base).json()["issue_review"][str(sid)]
+        self.assertEqual(review["pending"], [0])
+
+    def test_tables_saved_before_the_check_are_reviewed(self):
+        sid = self.load("CANT - COLUMNAS.csv", b"Nivel;Nivel base;V\nPB;PB;2\nP1;P1;3")
+        m = {
+            "category": "CANT - COLUMNAS.csv",
+            "category_field": "Nivel base",
+            "mode": "direct",
+            "decimal": ",",
+            "fields": {"level": "Nivel", "volume": "V"},
+            "units": {"volume": "m³"},
+            "direct_basis": "row_total",
+        }
+        self.client.put(self.base + f"/tables/{sid}/mapping", json=m, headers=self.headers()).raise_for_status()
+        table = self.client.get(self.base).json()["tables"][0]
+        self.assertTrue(table["levels_as_category"])
+        # Simulate a result stored before the flag existed.
+        import json
+        import sqlite3
+
+        db = sqlite3.connect(os.environ["CIVIL_BIM_DB"])
+        result = json.loads(db.execute("SELECT result FROM source").fetchone()[0])
+        del result["levels_as_category"]
+        db.execute("UPDATE source SET result=?", (json.dumps(result),))
+        db.commit()
+        db.close()
+        self.assertTrue(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
+        self.client.put(
+            self.base + f"/tables/{sid}/mapping?template=Columnas",
+            json={**m, "category_confirmed": True},
+            headers=self.headers(),
+        ).raise_for_status()
+        state = self.client.get(self.base).json()
+        self.assertNotIn("category_confirmed", state["templates"]["Columnas"])
+        self.assertFalse(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
+
+    def test_legacy_tables_are_checked_once_and_sheet_changes_reset_confirmation(self):
+        import json
+
+        from planner_api.db import connect
+
+        sid = self.load("columnas.csv", b"Nivel;Nivel base;V\nNivel;Nivel base;V\nPB;PB;2")
+        m = {
+            "category": "Columnas",
+            "category_field": "Nivel base",
+            "mode": "direct",
+            "decimal": ",",
+            "fields": {"level": "Nivel", "volume": "V"},
+            "units": {"volume": "m³"},
+            "direct_basis": "row_total",
+            "category_confirmed": True,
+        }
+        url = self.base + f"/tables/{sid}/mapping"
+        # A confirmation for a pair that was never saved is not accepted.
+        confirmed = lambda: self.client.get(self.base).json()["tables"][0]["mapping"].get(
+            "category_confirmed"
+        )
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.assertFalse(confirmed())
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.assertTrue(confirmed())
+        # Sending the old confirmation with another column pair drops it.
+        swapped = {
+            **m,
+            "category_field": "Nivel",
+            "fields": {"level": "Nivel base", "volume": "V"},
+        }
+        self.client.put(url, json=swapped, headers=self.headers()).raise_for_status()
+        self.assertFalse(confirmed())
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.assertTrue(confirmed())
+        # A new header row means new rows: the confirmation no longer applies.
+        self.client.put(
+            self.base + f"/tables/{sid}/options",
+            json={"header_row": 2},
+            headers=self.headers(),
+        ).raise_for_status()
+        table = self.client.get(self.base).json()["tables"][0]
+        self.assertFalse(table["mapping"].get("category_confirmed"))
+        self.assertTrue(table["levels_as_category"])
+        # Changing how the file is parsed also resets it.
+        m["category_confirmed"] = True
+        self.client.put(
+            self.base + f"/tables/{sid}/mapping", json=m, headers=self.headers()
+        ).raise_for_status()
+        self.client.put(
+            self.base + f"/tables/{sid}/options",
+            json={"header_row": 2, "delimiter": ";"},
+            headers=self.headers(),
+        ).raise_for_status()
+        self.assertFalse(
+            self.client.get(self.base).json()["tables"][0]["mapping"].get("category_confirmed")
+        )
+        # Results stored before the check: the file is read once, not on
+        # every page load, and the stored mapping stays readable by older
+        # instances (no confirmation field unless it was given).
+        import planner_api.main as main
+
+        with connect(True) as db:
+            stored = db.execute("SELECT mapping, result FROM source").fetchone()
+            self.assertNotIn("category_confirmed", json.loads(stored["mapping"]))
+            result = json.loads(stored["result"])
+            del result["levels_as_category"]
+            result["detail"][0]["Nota"] = "levels_as_category"  # A cell, not the flag.
+            db.execute("UPDATE source SET result=?", (json.dumps(result),))
+        calls = []
+        original = main.levels_as_category
+
+        def counted(*args):
+            calls.append(args)
+            return original(*args)
+
+        main.levels_as_category = counted
+        try:
+            for _ in range(3):
+                table = self.client.get(self.base).json()["tables"][0]
+                self.assertTrue(table["levels_as_category"])
+        finally:
+            main.levels_as_category = original
+        self.assertEqual(len(calls), 1)
+
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
         with TestClient(app) as admin:
