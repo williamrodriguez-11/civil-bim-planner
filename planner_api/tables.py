@@ -304,11 +304,10 @@ def levels_as_category(frame, mapping: Mapping):
     if not level or column not in frame or level not in frame:
         return False
     pairs = [
-        (str(c).strip(), str(n).strip())
-        for c, n in zip(frame[column], frame[level])
-        if str(c).strip()
+        (str(c).strip(), str(n).strip()) for c, n in zip(frame[column], frame[level])
     ]
-    return bool(pairs) and all(c == n for c, n in pairs)
+    # An empty category next to a level is a difference too.
+    return any(c for c, _ in pairs) and all(c == n for c, n in pairs)
 
 
 def identity(data, options, sheets):

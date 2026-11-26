@@ -661,6 +661,10 @@ class ScheduleTests(unittest.TestCase):
             {r["Categoría"] for r in excluded["detail"]}, {"Sotano", "Piso 1"}
         )
         self.assertFalse(excluded["levels_as_category"])
+        # A row with an empty category also differs from its level.
+        frame = read_table(data + b"\n Piso 2;;9", "columnas.csv")
+        blank = calculate(frame, mapping("Nivel base"), "columnas.csv")
+        self.assertFalse(blank["levels_as_category"])
 
     def test_inventory_units_attributes_and_unmeasured_volume(self):
         from bim_planner.importer import read_table

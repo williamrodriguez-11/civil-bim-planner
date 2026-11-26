@@ -715,6 +715,14 @@ def assign(
     with connect(True, project=pid) as db:
         p = project(db, pid, revision)
         row = source(db, pid, sid)
+        if m.category_confirmed:
+            # A confirmation covers only the category/level pair it was given for.
+            stored = Mapping.model_validate_json(row["mapping"]) if row["mapping"] else None
+            if stored is None or (stored.category_field, stored.fields.get("level")) != (
+                m.category_field,
+                m.fields.get("level"),
+            ):
+                m = m.model_copy(update={"category_confirmed": False})
         frame = read(
             row["data"], row["name"], Options.model_validate_json(row["options"])
         )

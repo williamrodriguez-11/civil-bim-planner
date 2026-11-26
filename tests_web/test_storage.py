@@ -226,10 +226,26 @@ class Storage(unittest.TestCase):
             "direct_basis": "row_total",
             "category_confirmed": True,
         }
-        self.client.put(
-            self.base + f"/tables/{sid}/mapping", json=m, headers=self.headers()
-        ).raise_for_status()
-        self.assertFalse(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
+        url = self.base + f"/tables/{sid}/mapping"
+        # A confirmation for a pair that was never saved is not accepted.
+        confirmed = lambda: self.client.get(self.base).json()["tables"][0]["mapping"].get(
+            "category_confirmed"
+        )
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.assertFalse(confirmed())
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.assertTrue(confirmed())
+        # Sending the old confirmation with another column pair drops it.
+        swapped = {
+            **m,
+            "category_field": "Nivel",
+            "fields": {"level": "Nivel base", "volume": "V"},
+        }
+        self.client.put(url, json=swapped, headers=self.headers()).raise_for_status()
+        self.assertFalse(confirmed())
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.client.put(url, json=m, headers=self.headers()).raise_for_status()
+        self.assertTrue(confirmed())
         # A new header row means new rows: the confirmation no longer applies.
         self.client.put(
             self.base + f"/tables/{sid}/options",
