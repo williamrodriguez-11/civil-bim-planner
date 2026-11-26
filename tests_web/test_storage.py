@@ -210,6 +210,46 @@ class Storage(unittest.TestCase):
         self.assertNotIn("category_confirmed", state["templates"]["Columnas"])
         self.assertFalse(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
 
+    def test_legacy_tables_are_checked_once_and_sheet_changes_reset_confirmation(self):
+        import json
+
+        from planner_api.db import connect
+        from planner_api.main import backfill_category_warnings
+
+        sid = self.load("columnas.csv", b"Nivel;Nivel base;V\nNivel;Nivel base;V\nPB;PB;2")
+        m = {
+            "category": "Columnas",
+            "category_field": "Nivel base",
+            "mode": "direct",
+            "decimal": ",",
+            "fields": {"level": "Nivel", "volume": "V"},
+            "units": {"volume": "m³"},
+            "direct_basis": "row_total",
+            "category_confirmed": True,
+        }
+        self.client.put(
+            self.base + f"/tables/{sid}/mapping", json=m, headers=self.headers()
+        ).raise_for_status()
+        self.assertFalse(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
+        # A new header row means new rows: the confirmation no longer applies.
+        self.client.put(
+            self.base + f"/tables/{sid}/options",
+            json={"header_row": 2},
+            headers=self.headers(),
+        ).raise_for_status()
+        table = self.client.get(self.base).json()["tables"][0]
+        self.assertFalse(table["mapping"]["category_confirmed"])
+        self.assertTrue(table["levels_as_category"])
+        # Results stored before the check get the flag once, at startup.
+        with connect(True) as db:
+            result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
+            del result["levels_as_category"]
+            db.execute("UPDATE source SET result=?", (json.dumps(result),))
+        backfill_category_warnings()
+        with connect() as db:
+            result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
+        self.assertTrue(result["levels_as_category"])
+
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
         with TestClient(app) as admin:

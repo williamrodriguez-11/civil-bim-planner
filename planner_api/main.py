@@ -47,6 +47,7 @@ from .tables import (
 @asynccontextmanager
 async def lifespan(app):
     initialize()
+    backfill_category_warnings()
     check_storage()
     yield
     close_pools()
@@ -342,6 +343,30 @@ def purge_project(pid: int, revision: int = Header(alias="If-Match")):
     return {"id": pid}
 
 
+def backfill_category_warnings():
+    """Check once the tables saved before the category warning existed."""
+    try:
+        with connect(True) as db:
+            rows = db.execute(
+                # The original file is read only for tables that need it.
+                "SELECT id,name,options,mapping,result FROM source "
+                "WHERE mapping IS NOT NULL AND result IS NOT NULL "
+                "AND result NOT LIKE ?",
+                ('%"levels_as_category"%',),
+            ).fetchall()
+            for row in rows:
+                result = json.loads(row["result"])
+                if "levels_as_category" in result:
+                    continue
+                result["levels_as_category"] = category_warning(db, row, result)
+                db.execute(
+                    "UPDATE source SET result=? WHERE id=?",
+                    (json.dumps(result, allow_nan=False), row["id"]),
+                )
+    except Exception:
+        logger.exception("No se pudo revisar la categoría de las tablas anteriores.")
+
+
 def category_warning(db, row, result):
     """Whether this table's category column only repeats its levels."""
     if not row["mapping"]:
@@ -600,6 +625,7 @@ def revise_options(
         frame = read(row["data"], row["name"], options)
         _, sheet = identity(row["data"], options, sheets)
         result = None
+        mapping = None
         if row["mapping"]:
             mapping = Mapping.model_validate_json(row["mapping"])
             if (
@@ -611,14 +637,17 @@ def revise_options(
                     raise ValueError(
                         "Retira las exclusiones manuales antes de cambiar la hoja o la fila de encabezados."
                     )
+                # A confirmed category column was checked on other rows.
+                mapping = mapping.model_copy(update={"category_confirmed": False})
             result = calculate(frame, mapping, row["name"])
             validate_result(db, p, sid, result)
         try:
             db.execute(
-                "UPDATE source SET options=?,sheet=?,result=? WHERE id=?",
+                "UPDATE source SET options=?,sheet=?,mapping=?,result=? WHERE id=?",
                 (
                     options.model_dump_json(),
                     sheet,
+                    mapping.model_dump_json() if mapping else None,
                     json.dumps(result) if result is not None else None,
                     sid,
                 ),
