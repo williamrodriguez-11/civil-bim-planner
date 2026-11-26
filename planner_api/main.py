@@ -347,6 +347,10 @@ def backfill_category_warnings():
     """Check once the tables saved before the category warning existed."""
     try:
         with connect() as db:
+            if db.execute(
+                "SELECT 1 FROM migration WHERE name='levels_as_category'"
+            ).fetchone():
+                return
             pending = [
                 dict(row)
                 for row in db.execute(
@@ -371,6 +375,11 @@ def backfill_category_warnings():
                         row["mapping"],
                     ),
                 )
+        with connect(True) as db:
+            db.execute(
+                "INSERT INTO migration(name) VALUES('levels_as_category') "
+                "ON CONFLICT(name) DO NOTHING"
+            )
     except Exception:
         logger.exception("No se pudo revisar la categoría de las tablas anteriores.")
 
@@ -636,16 +645,14 @@ def revise_options(
         mapping = None
         if row["mapping"]:
             mapping = Mapping.model_validate_json(row["mapping"])
-            if (
-                options.header_row
-                != Options.model_validate_json(row["options"]).header_row
-                or sheet != row["sheet"]
-            ):
+            previous = Options.model_validate_json(row["options"])
+            if options.header_row != previous.header_row or sheet != row["sheet"]:
                 if mapping.excluded_rows:
                     raise ValueError(
                         "Retira las exclusiones manuales antes de cambiar la hoja o la fila de encabezados."
                     )
-                # A confirmed category column was checked on other rows.
+            if options != previous or sheet != row["sheet"]:
+                # A confirmed category column was checked on other values.
                 mapping = mapping.model_copy(update={"category_confirmed": False})
             result = calculate(frame, mapping, row["name"])
             validate_result(db, p, sid, result)

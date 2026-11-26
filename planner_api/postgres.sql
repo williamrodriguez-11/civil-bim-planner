@@ -50,3 +50,4 @@ CREATE INDEX IF NOT EXISTS report_project ON report(project);
 CREATE INDEX IF NOT EXISTS session_account ON session(account_id);
 CREATE INDEX IF NOT EXISTS session_expires ON session(expires);
 CREATE INDEX IF NOT EXISTS auth_attempt_until ON auth_attempt(until);
+CREATE TABLE IF NOT EXISTS migration(name TEXT PRIMARY KEY);

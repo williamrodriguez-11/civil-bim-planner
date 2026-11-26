@@ -240,11 +240,26 @@ class Storage(unittest.TestCase):
         table = self.client.get(self.base).json()["tables"][0]
         self.assertFalse(table["mapping"]["category_confirmed"])
         self.assertTrue(table["levels_as_category"])
+        # Changing how the file is parsed also resets it.
+        m["category_confirmed"] = True
+        self.client.put(
+            self.base + f"/tables/{sid}/mapping", json=m, headers=self.headers()
+        ).raise_for_status()
+        self.client.put(
+            self.base + f"/tables/{sid}/options",
+            json={"header_row": 2, "delimiter": ";"},
+            headers=self.headers(),
+        ).raise_for_status()
+        self.assertFalse(
+            self.client.get(self.base).json()["tables"][0]["mapping"]["category_confirmed"]
+        )
         # Results stored before the check get the flag once, at startup.
         with connect(True) as db:
             result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
             del result["levels_as_category"]
             db.execute("UPDATE source SET result=?", (json.dumps(result),))
+        with connect(True) as db:
+            db.execute("DELETE FROM migration")
         backfill_category_warnings()
         with connect() as db:
             result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
@@ -266,12 +281,20 @@ class Storage(unittest.TestCase):
             return original(db, row, result)
 
         main.category_warning = concurrent_save
+        with connect(True) as db:
+            db.execute("DELETE FROM migration")
         try:
             backfill_category_warnings()
         finally:
             main.category_warning = original
         with connect() as db:
             self.assertEqual(db.execute("SELECT result FROM source").fetchone()["result"], newer)
+        # Once done, later startups do not read the saved results again.
+        main.category_warning = lambda *args: self.fail("revisada otra vez")
+        try:
+            backfill_category_warnings()
+        finally:
+            main.category_warning = original
 
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
