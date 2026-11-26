@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS template(
 CREATE TABLE IF NOT EXISTS event(
  id INTEGER PRIMARY KEY, project INTEGER NOT NULL REFERENCES project(id),
  message TEXT NOT NULL, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS migration(name TEXT PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS event_project ON event(project, id);
 CREATE INDEX IF NOT EXISTS report_project ON report(project);
 CREATE INDEX IF NOT EXISTS session_account ON session(account_id);

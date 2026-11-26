@@ -47,7 +47,6 @@ from .tables import (
 @asynccontextmanager
 async def lifespan(app):
     initialize()
-    backfill_category_warnings()
     check_storage()
     yield
     close_pools()
@@ -343,45 +342,16 @@ def purge_project(pid: int, revision: int = Header(alias="If-Match")):
     return {"id": pid}
 
 
-def backfill_category_warnings():
-    """Check once the tables saved before the category warning existed."""
-    try:
-        with connect() as db:
-            if db.execute(
-                "SELECT 1 FROM migration WHERE name='levels_as_category'"
-            ).fetchone():
-                return
-            pending = [
-                dict(row)
-                for row in db.execute(
-                    # The original file is read only for tables that need it.
-                    "SELECT id,project,name,options,mapping,result FROM source "
-                    "WHERE mapping IS NOT NULL AND result IS NOT NULL"
-                )
-                if "levels_as_category" not in json.loads(row["result"])
-            ]
-        for row in pending:
-            with connect(True, project=row["project"]) as db:
-                result = json.loads(row["result"])
-                result["levels_as_category"] = category_warning(db, row, result)
-                # Another instance may have saved the table meanwhile (for
-                # example during a deploy): only fill in an unchanged result.
-                db.execute(
-                    "UPDATE source SET result=? WHERE id=? AND result=? AND mapping=?",
-                    (
-                        json.dumps(result, allow_nan=False),
-                        row["id"],
-                        row["result"],
-                        row["mapping"],
-                    ),
-                )
-        with connect(True) as db:
-            db.execute(
-                "INSERT INTO migration(name) VALUES('levels_as_category') "
-                "ON CONFLICT(name) DO NOTHING"
-            )
-    except Exception:
-        logger.exception("No se pudo revisar la categoría de las tablas anteriores.")
+# Tables saved before the category warning existed are checked once per
+# process and per configuration, instead of on every page load.
+_legacy_warnings = {}
+
+
+def mapping_json(mapping: Mapping):
+    """Stored mapping. The confirmation is only written when given, so that an
+    older instance still running during a deploy can read the other tables."""
+    exclude = None if mapping.category_confirmed else {"category_confirmed"}
+    return mapping.model_dump_json(exclude=exclude)
 
 
 def category_warning(db, row, result):
@@ -393,13 +363,16 @@ def category_warning(db, row, result):
     mapping = Mapping.model_validate_json(row["mapping"])
     if not mapping.category_field:
         return False
-    # Results saved before this check: read that one source to decide.
-    data = db.execute("SELECT data FROM source WHERE id=?", (row["id"],)).fetchone()["data"]
-    try:
-        frame = read(data, row["name"], Options.model_validate_json(row["options"]))
-    except ValueError:
-        return False
-    return levels_as_category(frame, mapping)
+    # Results saved before this check: read that one source once to decide.
+    key = (row["id"], row["mapping"], row["options"])
+    if key not in _legacy_warnings:
+        found = db.execute("SELECT data FROM source WHERE id=?", (row["id"],)).fetchone()
+        try:
+            frame = read(found["data"], row["name"], Options.model_validate_json(row["options"]))
+            _legacy_warnings[key] = levels_as_category(frame, mapping)
+        except ValueError:
+            _legacy_warnings[key] = False
+    return _legacy_warnings[key]
 
 
 @project_routes.get("")
@@ -662,7 +635,7 @@ def revise_options(
                 (
                     options.model_dump_json(),
                     sheet,
-                    mapping.model_dump_json() if mapping else None,
+                    mapping_json(mapping) if mapping else None,
                     json.dumps(result) if result is not None else None,
                     sid,
                 ),
@@ -749,7 +722,7 @@ def assign(
         validate_result(db, p, sid, result)
         db.execute(
             "UPDATE source SET mapping=?,result=? WHERE id=?",
-            (m.model_dump_json(), json.dumps(result, allow_nan=False), sid),
+            (mapping_json(m), json.dumps(result, allow_nan=False), sid),
         )
         previous = json.loads(row["result"])["issues"] if row["result"] else []
         carry_archived_issues(db, sid, previous, result["issues"])

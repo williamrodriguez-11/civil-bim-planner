@@ -214,7 +214,6 @@ class Storage(unittest.TestCase):
         import json
 
         from planner_api.db import connect
-        from planner_api.main import backfill_category_warnings
 
         sid = self.load("columnas.csv", b"Nivel;Nivel base;V\nNivel;Nivel base;V\nPB;PB;2")
         m = {
@@ -238,7 +237,7 @@ class Storage(unittest.TestCase):
             headers=self.headers(),
         ).raise_for_status()
         table = self.client.get(self.base).json()["tables"][0]
-        self.assertFalse(table["mapping"]["category_confirmed"])
+        self.assertFalse(table["mapping"].get("category_confirmed"))
         self.assertTrue(table["levels_as_category"])
         # Changing how the file is parsed also resets it.
         m["category_confirmed"] = True
@@ -251,50 +250,35 @@ class Storage(unittest.TestCase):
             headers=self.headers(),
         ).raise_for_status()
         self.assertFalse(
-            self.client.get(self.base).json()["tables"][0]["mapping"]["category_confirmed"]
+            self.client.get(self.base).json()["tables"][0]["mapping"].get("category_confirmed")
         )
-        # Results stored before the check get the flag once, at startup.
-        with connect(True) as db:
-            result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
-            del result["levels_as_category"]
-            db.execute("UPDATE source SET result=?", (json.dumps(result),))
-        with connect(True) as db:
-            db.execute("DELETE FROM migration")
-        backfill_category_warnings()
-        with connect() as db:
-            result = json.loads(db.execute("SELECT result FROM source").fetchone()["result"])
-        self.assertTrue(result["levels_as_category"])
-
-        # A table saved by another instance meanwhile is left untouched.
+        # Results stored before the check: the file is read once, not on
+        # every page load, and the stored mapping stays readable by older
+        # instances (no confirmation field unless it was given).
         import planner_api.main as main
 
         with connect(True) as db:
+            stored = db.execute("SELECT mapping, result FROM source").fetchone()
+            self.assertNotIn("category_confirmed", json.loads(stored["mapping"]))
+            result = json.loads(stored["result"])
             del result["levels_as_category"]
             result["detail"][0]["Nota"] = "levels_as_category"  # A cell, not the flag.
             db.execute("UPDATE source SET result=?", (json.dumps(result),))
-        newer = json.dumps({"detail": [], "issues": [], "levels_as_category": False})
-        original = main.category_warning
+        calls = []
+        original = main.levels_as_category
 
-        def concurrent_save(db, row, result):
-            # The row changes after the backfill read it.
-            db.execute("UPDATE source SET result=?", (newer,))
-            return original(db, row, result)
+        def counted(*args):
+            calls.append(args)
+            return original(*args)
 
-        main.category_warning = concurrent_save
-        with connect(True) as db:
-            db.execute("DELETE FROM migration")
+        main.levels_as_category = counted
         try:
-            backfill_category_warnings()
+            for _ in range(3):
+                table = self.client.get(self.base).json()["tables"][0]
+                self.assertTrue(table["levels_as_category"])
         finally:
-            main.category_warning = original
-        with connect() as db:
-            self.assertEqual(db.execute("SELECT result FROM source").fetchone()["result"], newer)
-        # Once done, later startups do not read the saved results again.
-        main.category_warning = lambda *args: self.fail("revisada otra vez")
-        try:
-            backfill_category_warnings()
-        finally:
-            main.category_warning = original
+            main.levels_as_category = original
+        self.assertEqual(len(calls), 1)
 
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
