@@ -716,7 +716,13 @@ def assign(
                     pid,
                     template.strip(),
                     m.model_dump_json(
-                        exclude={"excluded_rows", "filter_values", "filter_column"}
+                        exclude={
+                            "excluded_rows",
+                            "filter_values",
+                            "filter_column",
+                            # Each table is checked on its own.
+                            "category_confirmed",
+                        }
                     ),
                 ),
             )

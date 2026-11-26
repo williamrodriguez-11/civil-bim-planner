@@ -201,7 +201,13 @@ class Storage(unittest.TestCase):
         db.commit()
         db.close()
         self.assertTrue(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
-        self.client.put(self.base + f"/tables/{sid}/mapping", json={**m, "category_confirmed": True}, headers=self.headers()).raise_for_status()
+        self.client.put(
+            self.base + f"/tables/{sid}/mapping?template=Columnas",
+            json={**m, "category_confirmed": True},
+            headers=self.headers(),
+        ).raise_for_status()
+        state = self.client.get(self.base).json()
+        self.assertNotIn("category_confirmed", state["templates"]["Columnas"])
         self.assertFalse(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
 
     def test_database_size_only_for_administrator(self):

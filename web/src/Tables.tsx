@@ -399,7 +399,17 @@ function Configure({
     [busy, setBusy] = useState(false),
     [advanced, setAdvanced] = useState(false);
   const change = (v: Partial<Mapping>) => {
-    setMapping({ ...mapping, ...v });
+    // A confirmation applies to one category/level pair only.
+    const pairChanged =
+      ("category_field" in v && v.category_field !== mapping.category_field) ||
+      (!!v.fields && v.fields.level !== mapping.fields.level);
+    setMapping({
+      ...mapping,
+      ...v,
+      ...(pairChanged && !("category_confirmed" in v)
+        ? { category_confirmed: false }
+        : {}),
+    });
     setMessage("");
   };
   const formatIssues = (saved?.issues ?? []).flatMap((row) => {
@@ -584,7 +594,7 @@ function Configure({
             <label>
               Categoría desde una columna (opcional)
               {select(mapping.category_field ?? "", (value) =>
-                change({ category_field: value, category_confirmed: false }),
+                change({ category_field: value }),
               )}
             </label>
           )}
@@ -608,6 +618,7 @@ function Configure({
       {mapping.category_field &&
         (mapping.category_field === mapping.fields.level ||
           (mapping.category_field === source.mapping?.category_field &&
+            mapping.fields.level === source.mapping?.fields.level &&
             !mapping.category_confirmed &&
             !!source.levels_as_category)) && (
           <div className="notice tools">
