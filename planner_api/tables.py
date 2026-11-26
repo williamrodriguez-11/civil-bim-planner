@@ -198,7 +198,14 @@ def calculate(frame, mapping: Mapping, name):
         if mapping.units.get(key) not in UNITS[dimension]:
             raise ValueError(f"Confirma la unidad de {LABELS[key]}.")
     args = mapping.model_dump(
-        exclude={"family", "material", "strength", "attributes", "category_field"}
+        exclude={
+            "family",
+            "material",
+            "strength",
+            "attributes",
+            "category_field",
+            "category_confirmed",
+        }
     )
     cfg = QuantityConfig(**args)
     if mapping.category_field:
@@ -207,19 +214,12 @@ def calculate(frame, mapping: Mapping, name):
             raise ValueError(
                 "La clasificación por columna requiere un campo existente y mediciones de origen."
             )
-        level = mapping.fields.get("level")
-        if level and level in frame:
-            pairs = [
-                (str(c).strip(), str(n).strip())
-                for c, n in zip(frame[mapping.category_field], frame[level])
-                if str(c).strip()
-            ]
-            if pairs and all(c == n for c, n in pairs):
-                raise ValueError(
-                    f"La columna «{mapping.category_field}» contiene los niveles, no el tipo "
-                    "de elemento. Deja «Categoría desde una columna» sin asignar y escribe "
-                    "la categoría de la tabla, por ejemplo Columnas."
-                )
+        if mapping.category_field == mapping.fields.get("level"):
+            raise ValueError(
+                f"La columna «{mapping.category_field}» es la del nivel, no el tipo "
+                "de elemento. Deja «Categoría desde una columna» sin asignar y escribe "
+                "la categoría de la tabla, por ejemplo Columnas."
+            )
         parts = []
         for category, subset in frame.groupby(
             frame[mapping.category_field].map(lambda value: str(value).strip()),
@@ -280,7 +280,35 @@ def calculate(frame, mapping: Mapping, name):
         if cfg.mode == "dimensions"
         else "Medición de origen"
     )
-    return {"detail": records(result.detail), "issues": records(result.issues)}
+    return {
+        "detail": records(result.detail),
+        "issues": records(result.issues),
+        "levels_as_category": levels_as_category(frame, mapping),
+    }
+
+
+def levels_as_category(frame, mapping: Mapping):
+    """True when the category column repeats the level in every source row.
+
+    Every row of the file counts, including rows that were excluded, filtered
+    or rejected, so that any of them can show the two columns differ. It is a
+    warning, not an error: a foundation inventory may legitimately have the
+    category «Cimentación» on the level «Cimentación».
+    """
+    level = mapping.fields.get("level")
+    column = mapping.category_field
+    if not column or mapping.category_confirmed:
+        return False
+    if column == level:
+        return True
+    if not level or column not in frame or level not in frame:
+        return False
+    pairs = [
+        (str(c).strip(), str(n).strip())
+        for c, n in zip(frame[column], frame[level])
+        if str(c).strip()
+    ]
+    return bool(pairs) and all(c == n for c, n in pairs)
 
 
 def identity(data, options, sheets):

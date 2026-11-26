@@ -37,6 +37,7 @@ from .tables import (
     calculate,
     identity,
     inspect_file,
+    levels_as_category,
     profile,
     read,
     suggest_header,
@@ -341,6 +342,24 @@ def purge_project(pid: int, revision: int = Header(alias="If-Match")):
     return {"id": pid}
 
 
+def category_warning(db, row, result):
+    """Whether this table's category column only repeats its levels."""
+    if not row["mapping"]:
+        return False
+    if result is not None and "levels_as_category" in result:
+        return result["levels_as_category"]
+    mapping = Mapping.model_validate_json(row["mapping"])
+    if not mapping.category_field:
+        return False
+    # Results saved before this check: read that one source to decide.
+    data = db.execute("SELECT data FROM source WHERE id=?", (row["id"],)).fetchone()["data"]
+    try:
+        frame = read(data, row["name"], Options.model_validate_json(row["options"]))
+    except ValueError:
+        return False
+    return levels_as_category(frame, mapping)
+
+
 @project_routes.get("")
 def state(pid: int):
     with connect() as db:
@@ -356,6 +375,9 @@ def state(pid: int):
             summary = dict(row)
             summary["mapping"] = json.loads(row["mapping"]) if row["mapping"] else None
             summary["options"] = json.loads(row["options"])
+            summary["levels_as_category"] = category_warning(
+                db, row, data.get(row["id"])
+            )
             summaries.append(summary)
         return {
             "project": p,
@@ -610,7 +632,7 @@ def revise_options(
         return {"id": sid}
 
 
-def carry_archived_issues(db, sid, issues):
+def carry_archived_issues(db, sid, previous, issues):
     """Keep archived issues archived when only their category label changed.
 
     Correcting a table's category (for example, levels used as categories)
@@ -620,12 +642,17 @@ def carry_archived_issues(db, sid, issues):
         return issue_snapshot({k: v for k, v in row.items() if k != "Categoría"})
 
     current = {key(row): issue_snapshot(row) for row in issues}
+    # Only incidences that were present just before this change keep their
+    # archive; an older archive must not hide a new rejection.
+    before = {issue_snapshot(row) for row in previous}
     for record in list(
         db.execute(
             "SELECT digest, issue, archived_at FROM issue_archive WHERE source=?",
             (sid,),
         )
     ):
+        if record["issue"] not in before:
+            continue
         snapshot = current.get(key(json.loads(record["issue"])))
         if snapshot is None or snapshot == record["issue"]:
             continue
@@ -680,7 +707,8 @@ def assign(
             "UPDATE source SET mapping=?,result=? WHERE id=?",
             (m.model_dump_json(), json.dumps(result, allow_nan=False), sid),
         )
-        carry_archived_issues(db, sid, result["issues"])
+        previous = json.loads(row["result"])["issues"] if row["result"] else []
+        carry_archived_issues(db, sid, previous, result["issues"])
         if template.strip():
             db.execute(
                 "INSERT INTO template VALUES(?,?,?) ON CONFLICT(project,name) DO UPDATE SET mapping=excluded.mapping",
@@ -763,6 +791,7 @@ def report(
                         "family",
                         "attributes",
                         "category_field",
+                        "category_confirmed",
                     }
                 )
             )

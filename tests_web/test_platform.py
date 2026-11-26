@@ -623,14 +623,13 @@ class ScheduleTests(unittest.TestCase):
         )
         self.assertEqual(saved["issues"][0]["Fila origen"], 4)
 
-    def test_levels_are_not_accepted_as_categories(self):
+    def test_levels_as_categories(self):
         from bim_planner.importer import read_table
         from planner_api.models import Mapping
         from planner_api.tables import calculate
 
-        data = b"Nivel;Nivel base;V\nSotano;Sotano;4\nPiso 1;Piso 1;2"
-        for column in ["Nivel", "Nivel base"]:
-            mapping = Mapping(
+        def mapping(column, **extra):
+            return Mapping(
                 category="CANT - COLUMNAS.csv",
                 category_field=column,
                 mode="direct",
@@ -638,12 +637,30 @@ class ScheduleTests(unittest.TestCase):
                 units={"volume": "m³"},
                 direct_basis="row_total",
                 decimal=",",
+                **extra,
             )
-            with self.assertRaisesRegex(ValueError, "contiene los niveles"):
-                calculate(read_table(data, "columnas.csv"), mapping, "columnas.csv")
-        mapping = mapping.model_copy(update={"category": "Columnas", "category_field": ""})
-        saved = calculate(read_table(data, "columnas.csv"), mapping, "columnas.csv")
-        self.assertEqual({r["Categoría"] for r in saved["detail"]}, {"Columnas"})
+
+        data = b"Nivel;Nivel base;V\nSotano;Sotano;4\nPiso 1;Piso 1;2"
+        frame = read_table(data, "columnas.csv")
+        # Reusing the level column is always an error.
+        with self.assertRaisesRegex(ValueError, "es la del nivel"):
+            calculate(frame, mapping("Nivel"), "columnas.csv")
+        # A separate column that repeats the level is only a warning.
+        saved = calculate(frame, mapping("Nivel base"), "columnas.csv")
+        self.assertTrue(saved["levels_as_category"])
+        confirmed = calculate(
+            frame, mapping("Nivel base", category_confirmed=True), "columnas.csv"
+        )
+        self.assertFalse(confirmed["levels_as_category"])
+        # An excluded row that differs shows that the column is a real category.
+        frame = read_table(data + b"\nPiso 2;Zapatas;9", "columnas.csv")
+        excluded = calculate(
+            frame, mapping("Nivel base", excluded_rows=[4]), "columnas.csv"
+        )
+        self.assertEqual(
+            {r["Categoría"] for r in excluded["detail"]}, {"Sotano", "Piso 1"}
+        )
+        self.assertFalse(excluded["levels_as_category"])
 
     def test_inventory_units_attributes_and_unmeasured_volume(self):
         from bim_planner.importer import read_table

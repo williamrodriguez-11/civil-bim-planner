@@ -156,6 +156,54 @@ class Storage(unittest.TestCase):
         self.assertEqual(review["history"][0]["archived_at"], archived_at)
         self.assertTrue(review["history"][0]["current"])
 
+    def test_old_archive_does_not_hide_a_new_rejection(self):
+        sid = self.load("columnas.csv", b"N;V;W\nPB;2;2\nP1;x;3")
+        url = self.base + f"/tables/{sid}/mapping"
+
+        def save(category, volume):
+            self.client.put(
+                url,
+                json={**MAPPING, "category": category, "fields": {"level": "N", "volume": volume}},
+                headers=self.headers(),
+            ).raise_for_status()
+
+        save("A", "V")
+        self.client.post(
+            self.base + f"/tables/{sid}/issue-archive", json={"index": 0}, headers=self.headers()
+        ).raise_for_status()
+        save("A", "W")  # Row 3 becomes valid: the incidence disappears.
+        save("B", "V")  # It comes back under another category.
+        review = self.client.get(self.base).json()["issue_review"][str(sid)]
+        self.assertEqual(review["pending"], [0])
+
+    def test_tables_saved_before_the_check_are_reviewed(self):
+        sid = self.load("CANT - COLUMNAS.csv", b"Nivel;Nivel base;V\nPB;PB;2\nP1;P1;3")
+        m = {
+            "category": "CANT - COLUMNAS.csv",
+            "category_field": "Nivel base",
+            "mode": "direct",
+            "decimal": ",",
+            "fields": {"level": "Nivel", "volume": "V"},
+            "units": {"volume": "m³"},
+            "direct_basis": "row_total",
+        }
+        self.client.put(self.base + f"/tables/{sid}/mapping", json=m, headers=self.headers()).raise_for_status()
+        table = self.client.get(self.base).json()["tables"][0]
+        self.assertTrue(table["levels_as_category"])
+        # Simulate a result stored before the flag existed.
+        import json
+        import sqlite3
+
+        db = sqlite3.connect(os.environ["CIVIL_BIM_DB"])
+        result = json.loads(db.execute("SELECT result FROM source").fetchone()[0])
+        del result["levels_as_category"]
+        db.execute("UPDATE source SET result=?", (json.dumps(result),))
+        db.commit()
+        db.close()
+        self.assertTrue(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
+        self.client.put(self.base + f"/tables/{sid}/mapping", json={**m, "category_confirmed": True}, headers=self.headers()).raise_for_status()
+        self.assertFalse(self.client.get(self.base).json()["tables"][0]["levels_as_category"])
+
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
         with TestClient(app) as admin:

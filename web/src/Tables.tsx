@@ -584,7 +584,7 @@ function Configure({
             <label>
               Categoría desde una columna (opcional)
               {select(mapping.category_field ?? "", (value) =>
-                change({ category_field: value }),
+                change({ category_field: value, category_confirmed: false }),
               )}
             </label>
           )}
@@ -608,10 +608,8 @@ function Configure({
       {mapping.category_field &&
         (mapping.category_field === mapping.fields.level ||
           (mapping.category_field === source.mapping?.category_field &&
-            !!saved?.detail.length &&
-            saved.detail.every(
-              (r) => String(r.Categoría) === String(r.Nivel),
-            ))) && (
+            !mapping.category_confirmed &&
+            !!source.levels_as_category)) && (
           <div className="notice tools">
             <span>
               La columna «{mapping.category_field}» contiene los niveles, no el
@@ -631,6 +629,11 @@ function Configure({
             >
               Usar una sola categoría para la tabla
             </button>
+            {mapping.category_field !== mapping.fields.level && (
+              <button onClick={() => change({ category_confirmed: true })}>
+                Es correcto, mantener la columna
+              </button>
+            )}
           </div>
         )}
       <div className="mapping-heading">
