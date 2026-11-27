@@ -99,35 +99,63 @@ export function Grid({
         .includes(query.toLocaleLowerCase()),
     ),
   );
-  if (sort)
+  if (sort) {
+    // One comparison per column: numbers as numbers (empty last), else text.
+    const byNumber = numeric.has(sort);
     view.sort((a, b) => {
       const x = a[sort],
         y = b[sort];
-      const order =
-        typeof x === "number" && typeof y === "number"
-          ? x - y
-          : String(x ?? "").localeCompare(String(y ?? ""), "es", {
-              numeric: true,
-            });
-      return order * (asc ? 1 : -1);
+      if (byNumber) {
+        if (typeof x !== "number" || typeof y !== "number")
+          return typeof x === "number" ? -1 : typeof y === "number" ? 1 : 0;
+        return (x - y) * (asc ? 1 : -1);
+      }
+      return (
+        String(x ?? "").localeCompare(String(y ?? ""), "es", {
+          numeric: true,
+        }) * (asc ? 1 : -1)
+      );
     });
+  }
   const activeGroup = groupable.includes(group) ? group : "";
-  const sums = [...numeric].filter((k) => visible.includes(k));
-  const groups = new Map<string, Row>();
+  // Row numbers and identifiers are not quantities: never summed.
+  const sums = [...numeric].filter(
+    (k) => visible.includes(k) && !["#", "Fila origen", "ID"].includes(k),
+  );
+  // The count must not collide with a column of the file called «Filas».
+  const countKey = keys.includes("Filas") ? "N.º de filas" : "Filas";
+  const groups = new Map<string, { row: Row; categories: Set<string> }>();
   if (activeGroup)
     for (const r of view) {
       const key = String(r[activeGroup] ?? "—");
-      const total =
-        groups.get(key) ??
-        ({ [activeGroup]: key, Filas: 0, ...Object.fromEntries(sums.map((k) => [k, 0])) } as Row);
-      total.Filas = (total.Filas as number) + 1;
-      for (const k of sums)
-        if (typeof r[k] === "number") total[k] = (total[k] as number) + (r[k] as number);
-      groups.set(key, total);
+      const entry = groups.get(key) ?? {
+        row: {
+          [activeGroup]: key,
+          [countKey]: 0,
+          ...Object.fromEntries(sums.map((k) => [k, 0])),
+        } as Row,
+        categories: new Set<string>(),
+      };
+      const total = entry.row;
+      total[countKey] = (total[countKey] as number) + 1;
+      if (r.Categoría !== undefined) entry.categories.add(String(r.Categoría));
+      for (const k of sums) {
+        // One row without the value makes the group total unknown.
+        if (typeof r[k] !== "number" || total[k] === null) total[k] = null;
+        else total[k] = (total[k] as number) + (r[k] as number);
+      }
+      groups.set(key, entry);
     }
-  const output: Row[] = activeGroup ? Array.from(groups.values()) : view;
+  const output: Row[] = activeGroup
+    ? Array.from(groups.values(), ({ row, categories }) => {
+        // A wall face and a slab footprint are different areas: never summed.
+        if (categories.size > 1)
+          for (const k of sums) if (k.startsWith("Área")) row[k] = null;
+        return row;
+      })
+    : view;
   const cols = activeGroup
-    ? [activeGroup, "Filas", ...sums]
+    ? [activeGroup, countKey, ...sums]
     : visible.filter((k) => keys.includes(k));
   const pages = Math.max(1, Math.ceil(output.length / 25)),
     index = Math.min(page, pages - 1);

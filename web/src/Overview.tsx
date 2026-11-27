@@ -567,6 +567,7 @@ export function Overview({
           </div>
           {sums.length && chartView === "Tabla" ? (
             <Grid
+              key={order + grouping}
               rows={sums.map(({ name, measure }) => ({
                 [grouping]: name,
                 Cantidad: measurementTotal(measure),

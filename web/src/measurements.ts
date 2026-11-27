@@ -85,7 +85,9 @@ export function levelHeight(name: string): number | null {
     return Number(elevation[1] + elevation[2].replace(",", "."));
   const number = Number(text.match(/\d+/)?.[0] ?? 1);
   if (/cimentaci|fundaci|zapata/.test(text)) return -10000;
+  if (/semi\s*-?\s*sotano/.test(text)) return -500;
   if (/sotano|basement/.test(text)) return -1000 - number;
+  if (/planta baja|ground|\bpb\b/.test(text)) return 0.5;
   if (/cubierta|azotea|terraza|roof/.test(text)) return 10000;
   if (/piso|nivel|planta|level|story|storey/.test(text)) return number;
   return null;
