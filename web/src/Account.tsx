@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Eye, EyeOff, Layers3 } from "lucide-react";
 import { api, cleanError } from "./model";
+import { prefersReducedMotion, SceneSlot } from "./SceneSlot";
 
 type User = { username: string };
 
@@ -17,9 +18,20 @@ export function Account({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const passwordField = useRef<HTMLInputElement>(null);
+  // Once the person signs in, a late answer of the initial session check
+  // must not replace the new account.
+  const manual = useRef(false);
+  const probed = useRef<User | null>(null);
+  // After the first submission, background check errors stay out of the form.
+  const submitted = useRef(false);
 
   useEffect(() => {
     const expired = () => {
+      probed.current = null;
+      setLeaving(false);
+      setBusy(false);
       setUser(null);
       setPassword("");
       setVisible(false);
@@ -37,15 +49,25 @@ export function Account({
     if (result === "error")
       setError("No se completó el acceso. Puedes volver a intentarlo.");
     if (result === "ok")
-      localStorage.setItem("civil-session-change", crypto.randomUUID());
+      try {
+        localStorage.setItem("civil-session-change", crypto.randomUUID());
+      } catch {
+        // Other tabs simply won't refresh on their own.
+      }
     if (result) history.replaceState(null, "", location.pathname);
     fetch("/api/auth/me", { cache: "no-store" })
       .then(async (r) => {
-        if (r.ok) setUser(await r.json());
-        else if (r.status !== 401)
+        if (r.ok) {
+          const found = await r.json();
+          // Held while a sign-in is pending; used if that attempt fails.
+          if (manual.current) probed.current = found;
+          else setUser(found);
+        } else if (r.status !== 401)
           throw Error("No se pudo comprobar la sesión.");
       })
-      .catch((e) => setError(cleanError(e)))
+      .catch((e) => {
+        if (!submitted.current) setError(cleanError(e));
+      })
       .finally(() => setLoading(false));
     return () => {
       window.removeEventListener("civil-session-expired", expired);
@@ -55,118 +77,161 @@ export function Account({
   }, []);
 
   function sessionChanged() {
-    localStorage.setItem("civil-session-change", crypto.randomUUID());
+    try {
+      // Tells other tabs; storage may be blocked, and that is fine.
+      localStorage.setItem("civil-session-change", crypto.randomUUID());
+    } catch {
+      // Other tabs simply won't refresh on their own.
+    }
     setPassword("");
     setVisible(false);
     setError("");
   }
 
   async function logout() {
+    probed.current = null;
     await api("/auth/logout", { method: "POST" });
     sessionChanged();
     setRegister(false);
+    setLeaving(false);
     setUser(null);
   }
 
-  if (loading)
-    return (
-      <div className="account-screen" role="status">
-        Abriendo tu espacio…
-      </div>
-    );
+  // The form is usable at once: the session check runs in the background
+  // (a sleeping server can take a while) and opens the panel if it succeeds.
   if (user) return children(user.username, logout);
   return (
-    <div className="account-screen">
-      <section className="panel account-panel">
-        <div className="section-title">
-          <Layers3 />
-          <b>CIVIL BIM Planner</b>
-        </div>
-        <h1>{register ? "Crea tu cuenta" : "Inicia sesión"}</h1>
-        <p>Accede a tus proyectos de obra desde cualquier equipo.</p>
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true);
-            setError("");
-            try {
-              const result = await api<User>(
-                register ? "/auth/register" : "/auth/login",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ username, password }),
-                },
-              );
-              sessionChanged();
-              setUser(result);
-            } catch (e) {
-              setError(cleanError(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <label>
-            Nombre de usuario o correo electrónico
-            <input
-              required
-              autoComplete="username"
-              autoCapitalize="none"
-              maxLength={254}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </label>
-          <div className="password-group">
-            <label htmlFor="civil-password">Contraseña</label>
-            <div className="password-input">
-              <input
-                id="civil-password"
-                required
-                type={visible ? "text" : "password"}
-                autoComplete={register ? "new-password" : "current-password"}
-                minLength={register ? 12 : undefined}
-                maxLength={256}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <button
-                type="button"
-                aria-label={
-                  visible ? "Ocultar contraseña" : "Mostrar contraseña"
-                }
-                aria-pressed={visible}
-                onClick={() => setVisible(!visible)}
-              >
-                {visible ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
+    <div className={"login" + (leaving ? " is-leaving" : "")}>
+      <SceneSlot status={leaving ? "success" : busy ? "pending" : "idle"} />
+      <main className="login-side">
+        <section className="account-panel">
+          <div className="login-brand">
+            <span className="brandmark">
+              <Layers3 />
+            </span>
+            <div>
+              <b>CIVIL BIM</b>
+              <span>PLANNER</span>
             </div>
           </div>
-          {register && (
-            <small>Elige una contraseña de al menos 12 caracteres.</small>
-          )}
-          {error && (
-            <p className="error" role="alert">
-              {error}
+          <h1>{register ? "Crea tu cuenta" : "Inicia sesión"}</h1>
+          <p>Accede a tus proyectos de obra desde cualquier equipo.</p>
+          <form
+            aria-busy={busy}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              manual.current = true;
+              submitted.current = true;
+              setBusy(true);
+              setError("");
+              try {
+                const result = await api<User>(
+                  register ? "/auth/register" : "/auth/login",
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password }),
+                  },
+                );
+                // A brief hand-off to the panel, skipped with reduced motion.
+                setLeaving(true);
+                if (!prefersReducedMotion())
+                  await new Promise((done) => setTimeout(done, 650));
+                probed.current = null;
+                sessionChanged();
+                setUser(result);
+                setLeaving(false);
+              } catch (e) {
+                manual.current = false;
+                setLeaving(false);
+                // The session check that overlapped this attempt is used once.
+                const existing = probed.current;
+                probed.current = null;
+                if (existing) {
+                  // The visitor already had a valid session.
+                  setUser(existing);
+                  return;
+                }
+                // Keep the username; select the password to type it again.
+                setError(cleanError(e));
+                passwordField.current?.focus();
+                passwordField.current?.select();
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <label>
+              Nombre de usuario o correo electrónico
+              <input
+                required
+                autoComplete="username"
+                autoCapitalize="none"
+                maxLength={254}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </label>
+            <div className="password-group">
+              <label htmlFor="civil-password">Contraseña</label>
+              <div className="password-input">
+                <input
+                  ref={passwordField}
+                  id="civil-password"
+                  required
+                  type={visible ? "text" : "password"}
+                  autoComplete={register ? "new-password" : "current-password"}
+                  minLength={register ? 12 : undefined}
+                  maxLength={256}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  aria-label={
+                    visible ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
+                  aria-pressed={visible}
+                  onClick={() => setVisible(!visible)}
+                >
+                  {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+            {register && (
+              <small>Elige una contraseña de al menos 12 caracteres.</small>
+            )}
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            <button className="primary login-submit" disabled={busy || leaving}>
+              {register ? "Crear cuenta" : "Iniciar sesión"}
+            </button>
+            <p className="login-status" role="status">
+              {leaving
+                ? "Acceso correcto. Abriendo tu panel…"
+                : busy
+                  ? "Comprobando tus datos…"
+                  : loading
+                    ? "Comprobando si ya tienes una sesión abierta…"
+                    : ""}
             </p>
-          )}
-          <button className="primary" disabled={busy}>
-            {register ? "Crear cuenta" : "Entrar"}
+          </form>
+          <button
+            disabled={busy}
+            onClick={() => {
+              setRegister(!register);
+              setPassword("");
+              setVisible(false);
+              setError("");
+            }}
+          >
+            {register ? "Ya tengo una cuenta" : "Crear una cuenta"}
           </button>
-        </form>
-        <button
-          disabled={busy}
-          onClick={() => {
-            setRegister(!register);
-            setPassword("");
-            setVisible(false);
-            setError("");
-          }}
-        >
-          {register ? "Ya tengo una cuenta" : "Crear una cuenta"}
-        </button>
-      </section>
+        </section>
+      </main>
     </div>
   );
 }
