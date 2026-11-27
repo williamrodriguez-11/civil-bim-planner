@@ -53,7 +53,8 @@ Si el aviso aparece aunque las papeleras estén vacías, amplía el plan de Neon
 - Desde **Crear una cuenta** se elige un correo o nombre de usuario y una contraseña de 12 a 256 caracteres. La misma cuenta funciona desde cualquier equipo.
 - Las contraseñas se guardan con scrypt y una sal aleatoria; la sesión dura 14 días en una cookie `HttpOnly` y `Secure`.
 - Cada dirección admite 60 intentos de acceso o registro cada 10 minutos, y cada cuenta 20 intentos de inicio de sesión en el mismo periodo. Al superarlos, la página pide esperar diez minutos.
-- Por ahora no hay cambio ni recuperación de contraseña desde la interfaz.
+- En **Configuración** (abajo en el menú) se ve la cuenta y se cambia la contraseña. La nueva debe tener al menos 12 caracteres, una mayúscula, una minúscula, un número y un símbolo, y no puede incluir el nombre de usuario; la pantalla muestra cada requisito mientras se escribe. Al cambiarla se cierran las sesiones abiertas en otros equipos. Las cuentas que entran con Google, Apple o Microsoft no usan contraseña.
+- Todavía no hay recuperación de contraseña olvidada.
 
 Los proyectos creados antes de que existieran las cuentas quedaron sin propietario. Para asignarlos a una cuenta, ejecuta en el servidor con la misma `DATABASE_URL` (o `CIVIL_BIM_DB`):
 

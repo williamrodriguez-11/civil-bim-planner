@@ -4,6 +4,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -148,13 +149,127 @@ def login(data: Credentials, request: Request, response: Response):
     if not row or not hmac.compare_digest(hashed, row["password_hash"]):
         raise HTTPException(401, "Usuario o contraseña incorrectos.")
     with connect(True) as db:
+        # A password change may have committed since it was checked.
+        still = db.execute(
+            "SELECT 1 FROM account WHERE id=? AND password_hash=?",
+            (row["id"], row["password_hash"]),
+        ).fetchone()
+        if not still:
+            raise HTTPException(401, "Usuario o contraseña incorrectos.")
         start_session(db, request, response, row["id"])
     return {"username": row["username"]}
 
 
 @router.get("/me")
 def me(user: Account):
-    return {"username": user["username"]}
+    with connect() as db:
+        row = db.execute(
+            "SELECT password_hash FROM account WHERE id=?", (user["id"],)
+        ).fetchone()
+        issuers = [
+            r["issuer"]
+            for r in db.execute(
+                "SELECT issuer FROM social_identity WHERE account_id=? ORDER BY issuer",
+                (user["id"],),
+            )
+        ]
+    providers = [
+        name
+        for name, host in (
+            ("Google", "accounts.google.com"),
+            ("Apple", "appleid.apple.com"),
+            ("Microsoft", "login.microsoftonline.com"),
+        )
+        if any(host in i for i in issuers)
+    ]
+    return {
+        "username": user["username"],
+        "has_password": bool(row and bytes(row["password_hash"])),
+        "providers": providers,
+    }
+
+
+def password_problems(password, username=""):
+    """Rules for a new password, as shown next to the field."""
+    problems = []
+    if not 12 <= len(password) <= 256:
+        problems.append("Usa entre 12 y 256 caracteres.")
+    if not re.search(r"[A-ZÁÉÍÓÚÑÜ]", password):
+        problems.append("Incluye al menos una letra mayúscula.")
+    if not re.search(r"[a-záéíóúñü]", password):
+        problems.append("Incluye al menos una letra minúscula.")
+    if not re.search(r"\d", password):
+        problems.append("Incluye al menos un número.")
+    # Punctuation or symbols (Unicode P* and S*), as the form checks.
+    if not any(unicodedata.category(c)[0] in "PS" for c in password):
+        problems.append("Incluye al menos un símbolo, por ejemplo ! # $ % & *.")
+    name = username.split("@")[0].lower()
+    lowered = password.lower()
+    if (len(name) >= 3 and name in lowered) or (
+        username and username.lower() in lowered
+    ):
+        problems.append("No incluyas tu nombre de usuario.")
+    return problems
+
+
+class PasswordChange(BaseModel):
+    current_password: SecretStr | None = None
+    new_password: SecretStr
+
+
+@router.post("/password")
+def change_password(data: PasswordChange, request: Request, user: Account):
+    limit_attempts(request, user["username"])
+    new = data.new_password.get_secret_value()
+    with connect() as db:
+        row = db.execute(
+            "SELECT salt, password_hash FROM account WHERE id=?", (user["id"],)
+        ).fetchone()
+    if not bytes(row["password_hash"]):
+        raise HTTPException(
+            409, "Esta cuenta entra con Google, Apple o Microsoft y no usa contraseña."
+        )
+    current = (
+        data.current_password.get_secret_value() if data.current_password else ""
+    )
+    if len(current) > 256 or not hmac.compare_digest(
+        password_hash(current, bytes(row["salt"])), bytes(row["password_hash"])
+    ):
+        raise HTTPException(403, "La contraseña actual no es correcta.")
+    if hmac.compare_digest(current.encode(), new.encode()):
+        raise HTTPException(
+            422, "La nueva contraseña debe ser distinta de la actual."
+        )
+    problems = password_problems(new, user["username"])
+    if problems:
+        raise HTTPException(422, " ".join(problems))
+    salt = secrets.token_bytes(16)
+    hashed = password_hash(new, salt)
+    with connect(True) as db:
+        # Only over the password that was verified, and only from a session
+        # that another change has not closed meanwhile.
+        changed = db.execute(
+            "UPDATE account SET salt=?, password_hash=? WHERE id=? AND password_hash=? "
+            "AND EXISTS(SELECT 1 FROM session WHERE account_id=? AND digest=?) RETURNING id",
+            (
+                salt,
+                hashed,
+                user["id"],
+                row["password_hash"],
+                user["id"],
+                digest(request.cookies.get(COOKIE, "")),
+            ),
+        ).fetchone()
+        if not changed:
+            raise HTTPException(
+                409, "La contraseña cambió mientras tanto. Vuelve a intentarlo."
+            )
+        # Other devices must sign in again with the new password.
+        db.execute(
+            "DELETE FROM session WHERE account_id=? AND digest<>?",
+            (user["id"], digest(request.cookies.get(COOKIE, ""))),
+        )
+    return {"ok": True}
 
 
 @router.post("/logout")

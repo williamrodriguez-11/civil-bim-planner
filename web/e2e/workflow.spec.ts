@@ -10,7 +10,9 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await page.goto("/");
   await page.getByRole("button", { name: "Crear una cuenta" }).click();
   await page.getByLabel("Nombre de usuario").fill("pilotes");
-  await page.getByLabel("Contraseña", { exact: true }).fill("cuenta para pruebas");
+  await page
+    .getByLabel("Contraseña", { exact: true })
+    .fill("cuenta para pruebas");
   await page.getByRole("button", { name: "Crear cuenta", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Resumen general" }),
@@ -32,7 +34,9 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
     buffer: Buffer.from("Planta;Medición;Marca\nPB;12,5;P-01\nPB;2,5;P-02"),
   });
   await page.getByRole("button", { name: "Guardar tabla" }).click();
-  const mappingHelp = page.getByRole("button", { name: "Ayuda sobre categoría y decimales" });
+  const mappingHelp = page.getByRole("button", {
+    name: "Ayuda sobre categoría y decimales",
+  });
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   await mappingHelp.focus();
   await expect(page.getByRole("tooltip")).toContainText("22.85");
@@ -49,14 +53,24 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await page.getByLabel("Unidad de Volumen").selectOption("m³");
   await page.getByLabel("Decimal en texto").selectOption(".");
   await page.getByRole("button", { name: "Calcular y guardar" }).click();
-  await expect(page.getByRole("status")).toContainText("sin filas cuantificadas");
+  await expect(page.getByRole("status")).toContainText(
+    "sin filas cuantificadas",
+  );
   await expect(page.getByRole("status")).toContainText("coma decimal");
   await page.getByRole("button", { name: "Revisar filas omitidas" }).click();
-  await expect(page.getByRole("button", { name: "Filas por revisar · 2" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("cell", { name: /12,5.*coma decimal/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Filas por revisar · 2" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("cell", { name: /12,5.*coma decimal/ }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Detalle", exact: true }).click();
-  await expect(page.getByText("No hay filas cuantificadas en la selección")).toBeVisible();
-  await page.getByRole("button", { name: "Tablas de origen", exact: true }).click();
+  await expect(
+    page.getByText("No hay filas cuantificadas en la selección"),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Tablas de origen", exact: true })
+    .click();
   await page.getByRole("button", { name: "Usar coma decimal" }).click();
   await expect(page.getByLabel("Decimal en texto")).toHaveValue(",");
   await page.getByRole("button", { name: "Calcular y guardar" }).click();
@@ -64,17 +78,25 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
     "Cuantificación guardada",
   );
   await page.getByRole("button", { name: "Ver detalle del proyecto" }).click();
-  await expect(page.getByRole("button", { name: "Detalle", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("cell", { name: "12,5", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Detalle", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("cell", { name: "12,5", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Programación", exact: true }).click();
   await page.getByLabel("Primera actividad").fill("Hormigonar pilotes");
   await page.getByLabel("Seleccionar Hormigonar pilotes").click();
   await page.getByRole("button", { name: "Agrupar en fase" }).click();
   await page.getByLabel("Nombre de la nueva fase").fill("Cimentación");
   await page.getByRole("button", { name: "Crear fase" }).click();
-  await expect(page.getByLabel("Nombre de la fase 1")).toHaveValue("Cimentación");
+  await expect(page.getByLabel("Nombre de la fase 1")).toHaveValue(
+    "Cimentación",
+  );
   await page.getByLabel("Nombre de la actividad 1.1").focus();
-  await page.getByText("Calcular la duración con cantidades (opcional)").click();
+  await page
+    .getByText("Calcular la duración con cantidades (opcional)")
+    .click();
   await page.getByLabel("Origen de la duración").selectOption({ index: 1 });
   await page.getByLabel("Rendimiento").fill("5");
   // 15 m³ at 5 m³ per day: 3 working days, computed by the server.
@@ -111,9 +133,16 @@ test("Inventario sin volumen conserva la unidad de cada partida", async ({
   page,
 }) => {
   const request = page.request;
-  expect((await request.post("/api/auth/register", {data: {
-    username: "inventario", password: "cuenta para pruebas"
-  }})).status()).toBe(201);
+  expect(
+    (
+      await request.post("/api/auth/register", {
+        data: {
+          username: "inventario",
+          password: "cuenta para pruebas",
+        },
+      })
+    ).status(),
+  ).toBe(201);
   const created = await request.post("/api/projects", {
     data: { name: "Ensayo sintético de mediciones" },
   });
@@ -188,11 +217,9 @@ test("Inventario sin volumen conserva la unidad de cada partida", async ({
     await picker.selectOption({ label });
     await expect(card.locator("strong")).toHaveText(total);
   }
-  const chart = page
-    .locator("section")
-    .filter({
-      has: page.getByRole("heading", { name: "Distribución · Masa" }),
-    });
+  const chart = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Distribución · Masa" }),
+  });
   await expect(chart.getByText("0 kg", { exact: true })).toBeVisible();
   await chart.getByRole("button", { name: "Por categoría" }).click();
   await expect(chart.locator(".bars label")).toHaveText(/Tuberías\s*3 kg/);
@@ -205,7 +232,9 @@ test("Inventario sin volumen conserva la unidad de cada partida", async ({
 
   await expect(totals.getByText("8 m²", { exact: true })).toBeVisible();
   await expect(totals.getByText("3 m²", { exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "Nivel", exact: true }).selectOption("N1");
+  await page
+    .getByRole("combobox", { name: "Nivel", exact: true })
+    .selectOption("N1");
   await expect(totals.getByText("5 m lineales", { exact: true })).toBeVisible();
   await expect(totals.getByText("0 kg", { exact: true })).toBeVisible();
 });
@@ -214,9 +243,16 @@ test("Importa un XLSX con portada y encabezado desplazado después de recuperar 
   page,
 }, info) => {
   const request = page.request;
-  expect((await request.post("/api/auth/register", {data: {
-    username: "mediciones", password: "cuenta para pruebas"
-  }})).status()).toBe(201);
+  expect(
+    (
+      await request.post("/api/auth/register", {
+        data: {
+          username: "mediciones",
+          password: "cuenta para pruebas",
+        },
+      })
+    ).status(),
+  ).toBe(201);
   const path = info.outputPath("Mediciones.xlsx");
   execFileSync(resolve("../.venv-web/Scripts/python.exe"), [
     "-c",
@@ -279,7 +315,10 @@ test("Importa un XLSX con portada y encabezado desplazado después de recuperar 
   await expect(
     page.getByRole("cell", { name: "Sótano", exact: true }),
   ).toBeVisible();
-  const remove = page.getByRole("button", { name: "Borrar tabla", exact: true });
+  const remove = page.getByRole("button", {
+    name: "Borrar tabla",
+    exact: true,
+  });
   const dialog = page.getByRole("dialog");
   await remove.click();
   await expect(dialog).toContainText("Mediciones.xlsx · Mediciones");
@@ -289,13 +328,25 @@ test("Importa un XLSX con portada y encabezado desplazado después de recuperar 
   await dialog.getByRole("button", { name: "Mover a la papelera" }).click();
   await expect(page.getByText("La biblioteca está vacía")).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Tablas de origen", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Tablas de origen", exact: true })
+    .click();
   await page.getByRole("button", { name: /Papelera de tablas/ }).click();
-  const row = page.locator(".trash-row").filter({ hasText: "Mediciones.xlsx · Mediciones" });
+  const row = page
+    .locator(".trash-row")
+    .filter({ hasText: "Mediciones.xlsx · Mediciones" });
   await row.getByRole("button", { name: "Restaurar" }).click();
-  await expect(page.getByText("No hay tablas en la papelera de este proyecto")).toBeVisible();
-  await page.getByRole("button", { name: "Tablas de origen", exact: true }).click();
-  await expect(page.getByLabel("Tabla activa")).toContainText("Mediciones.xlsx");
+  await expect(
+    page.getByText("No hay tablas en la papelera de este proyecto"),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Tablas de origen", exact: true })
+    .click();
+  await expect(page.getByLabel("Tabla activa")).toContainText(
+    "Mediciones.xlsx",
+  );
   await page.getByText("Revisar filas de origen", { exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Sótano", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Sótano", exact: true }),
+  ).toBeVisible();
 });
