@@ -141,12 +141,6 @@ function Shares({
   }, []);
   const measured = parts.filter((p) => p.value !== null && p.value > 0);
   const total = measured.reduce((n, p) => n + (p.value ?? 0), 0);
-  if (!total)
-    return (
-      <div className="chart-empty">
-        <b>Sin cantidades para repartir</b>
-      </div>
-    );
   const order = [...names].sort((a, b) =>
     a.localeCompare(b, "es", { numeric: true }),
   );
@@ -192,7 +186,17 @@ function Shares({
           </p>
         )}
       </div>
-      <div className="shares-bar" role="img" aria-label={"Reparto: " + summary}>
+      {!total && (
+        <p className="notice">
+          Todas las cantidades medidas son cero: no hay reparto que dibujar.
+        </p>
+      )}
+      <div
+        className="shares-bar"
+        role="img"
+        hidden={!total}
+        aria-label={"Reparto: " + summary}
+      >
         {blocks.map((b) => {
           const share = (b.value / total) * 100;
           return (
@@ -214,7 +218,9 @@ function Shares({
               {share >= 9 && (
                 <b
                   style={
-                    colored.indexOf(b.key) === 3 ? { color: "#0b0b0b" } : undefined
+                    colored.indexOf(b.key) === 5
+                      ? { color: "var(--series-6-ink)" }
+                      : undefined
                   }
                 >
                   {pct(Math.round(share))}
@@ -231,7 +237,9 @@ function Shares({
             : p.value
               ? REST
               : null;
-          const share = p.value && total ? (p.value / total) * 100 : null;
+          // A measured zero is 0 %; only a missing measurement shows «—».
+          const share =
+            p.value === null ? null : total ? (p.value / total) * 100 : 0;
           return (
             <li
               key={p.name}

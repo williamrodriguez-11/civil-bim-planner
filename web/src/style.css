@@ -1307,6 +1307,9 @@ button.danger:hover {
   --series-5: #ee7fac;
   --series-6: #008a17;
   --series-other: #9aa7a0;
+  /* Label ink on each fill, >= 4.5:1. */
+  --series-ink: #0b0b0b;
+  --series-6-ink: #ffffff;
 }
 :root[data-theme="dark"] {
   --series-1: #338ced;
@@ -1315,7 +1318,8 @@ button.danger:hover {
   --series-4: #d28e05;
   --series-5: #e24d8b;
   --series-6: #0aac23;
-  --series-other: #6b7c73;
+  --series-other: #8a9a92;
+  --series-6-ink: #0b0b0b;
 }
 .shares {
   display: grid;
@@ -1377,7 +1381,7 @@ button.danger:hover {
 }
 .shares-bar b {
   padding-left: 8px;
-  color: #fff;
+  color: var(--series-ink);
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
@@ -1436,4 +1440,7 @@ button.danger:hover {
   .shares-list li {
     transition: none;
   }
+}
+.shares-bar[hidden] {
+  display: none;
 }
