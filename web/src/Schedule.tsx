@@ -118,6 +118,13 @@ function workdays(from: string, to: string, plan: Plan, calendar?: string) {
   return count;
 }
 
+/** The first working day on or after a date (within ten years). */
+function firstWorkday(from: string, plan: Plan, calendar?: string) {
+  for (let d = toDay(from), end = d + 3660; d <= end; d++)
+    if (workdays(fromDay(d), fromDay(d), plan, calendar)) return fromDay(d);
+  return null;
+}
+
 const RELATION_CODES: Record<string, string> = {
   FC: "FS",
   FS: "FS",
@@ -325,6 +332,18 @@ export function Schedule({
   const [scale, setScale] = useState<Scale>("week");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  // The last start typed in the table. If the recalculated schedule cannot
+  // honour it, a notice says why and offers a way out.
+  const failedDraft = useRef<Plan | null>(null); // the draft a preview rejected
+  // Whether a preview has succeeded since the last start edit: after that,
+  // a failure comes from something else.
+  const startChecked = useRef(false);
+  const [request, setRequest] = useState<{
+    id: number;
+    value: string;
+    before: string | null | undefined;
+    removed: Task["links"]; // links taken out from the notice
+  } | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [phaseName, setPhaseName] = useState<string | null>(null);
   const focusNext = useRef<{ id: number; field: string } | null>(null);
@@ -428,10 +447,12 @@ export function Schedule({
           setTimeline(result);
           setProblem(null);
           setFresh(true);
+          startChecked.current = true;
         }
       } catch (e) {
         if (live) {
           setNotice("");
+          failedDraft.current = draft;
           setProblem({
             message: cleanError(e),
             info: (e as Error & { info?: ErrorInfo }).info,
@@ -541,7 +562,23 @@ export function Schedule({
   // typing a finish changes the duration, counting working days.
   function setStart(id: number, value: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    const t = tasks.get(id)!;
+    // Retrying the same activity keeps what «Dejarla como estaba» restores.
+    setRequest((r) =>
+      r && r.id === id
+        ? { ...r, value }
+        : { id, value, before: t.earliest, removed: [] },
+    );
+    // If the draft already failed before this edit, a failure is not its.
+    // A retry on the same activity whose failure was already its own keeps
+    // being attributed to it.
+    const retry = request?.id === id && !startChecked.current;
+    startChecked.current = !!problem && !retry;
     patchTask(id, { earliest: value });
+    if (!workdays(value, value, draft, t.calendar))
+      setNotice(
+        `El ${shortDate(value)} no es laborable para esta actividad: se pasa al siguiente día laborable posible.`,
+      );
   }
   function setFinish(id: number, value: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
@@ -812,6 +849,7 @@ export function Schedule({
       setDirty(false);
       setDurations({});
       setNotice("Cronograma guardado.");
+      setRequest(null);
     } catch (e) {
       setProblem({
         message: cleanError(e),
@@ -989,6 +1027,45 @@ export function Schedule({
   const activePhase =
     active?.kind === "phase" ? phaseRows.get(active.code) : undefined;
   const chosen = sequence.filter((id) => selected.has(id));
+  // Why a start typed in the table is not honoured, if it is not.
+  const startHold = useMemo(() => {
+    if (!request) return null;
+    const t = tasks.get(request.id);
+    if (!t || t.earliest !== request.value) return null;
+    // The recalculation failed because of it: offer to undo.
+    if (!fresh)
+      // Only for the preview of this very draft, wherever the error is.
+      return problem && failedDraft.current === draft && !startChecked.current
+        ? { t, d: undefined, why: null as string | null, failed: true }
+        : null;
+    const row = computed.get(request.id);
+    if (!row) return null;
+    // Nothing can start before the project, so that is the floor.
+    const early = request.value < draft.start;
+    const floor = firstWorkday(
+      early ? draft.start : request.value,
+      draft,
+      t.calendar,
+    );
+    if (!floor) return null;
+    const held = row.start > floor;
+    if (!held && !early) return { t, d: undefined, why: null, honoured: true };
+    // Before the project start, that is the reason, whatever else holds it.
+    const d = held && !early ? row.driver : undefined;
+    const why = early
+      ? `el proyecto empieza el ${shortDate(draft.start)}`
+      : d?.type === "link"
+        ? `depende de «${names.get(d.predecessor)}», que la deja empezar el ${shortDate(row.start)}`
+        : d?.type === "fixed_finish"
+          ? `debe terminar el ${shortDate(d.date)} y dura ${days(row.duration)}`
+          : null;
+    return why ? { t, d, why } : null;
+  }, [request, tasks, fresh, problem, computed, draft, names]);
+  // Once honoured, its undo is no longer offered.
+  useEffect(() => {
+    if (startHold && "honoured" in startHold) setRequest(null);
+  }, [startHold]);
+
   const pickList = draft.tasks
     .filter((t) => t.name.trim())
     .map((t) => ({ id: t.id, text: `${t.wbs} · ${t.name}` }));
@@ -1180,6 +1257,60 @@ export function Schedule({
           </button>
         </div>
       )}
+      {(() => {
+        if (!request || !startHold || "honoured" in startHold) return null;
+        const { t, d, why } = startHold;
+        return (
+          <div className="notice planner-problem" role="status">
+            <span>
+              {why
+                ? `«${names.get(request.id)}» no puede empezar el ${shortDate(request.value)} porque ${why}.`
+                : `El nuevo inicio de «${names.get(request.id)}» (${shortDate(request.value)}) no se puede aplicar.`}
+            </span>
+            {d?.type === "link" && (
+              <button
+                disabled={saving}
+                onClick={() => {
+                  setRequest({
+                    ...request,
+                    removed: [
+                      ...request.removed,
+                      ...t.links.filter((l) => l.predecessor === d.predecessor),
+                    ],
+                  });
+                  patchTask(request.id, {
+                    links: t.links.filter(
+                      (l) => l.predecessor !== d.predecessor,
+                    ),
+                  });
+                }}
+              >
+                Quitar el vínculo con «{names.get(d.predecessor)}»
+              </button>
+            )}
+            <button
+              disabled={saving}
+              onClick={() => {
+                // Back to how it was: date and any link taken out here.
+                patchTask(request.id, {
+                  earliest: request.before ?? null,
+                  links: [
+                    ...t.links,
+                    ...request.removed.filter(
+                      (l) =>
+                        tasks.has(l.predecessor) &&
+                        !t.links.some((x) => x.predecessor === l.predecessor),
+                    ),
+                  ],
+                });
+                setRequest(null);
+              }}
+            >
+              Dejarla como estaba
+            </button>
+          </div>
+        );
+      })()}
       {(() => {
         // A cell error inside a folded phase still blocks saving: say where.
         const shown = new Set(

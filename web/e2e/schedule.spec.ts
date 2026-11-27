@@ -273,4 +273,20 @@ test("Como en Project: fechas en la tabla, predecesoras por número y enlazar ar
     page.getByLabel("Duración en días laborables de Desmonte y limpieza"),
   ).toHaveValue("4");
   await expect(date("Inicio", "Desmonte y limpieza")).toHaveText("16 nov");
+
+  // A start earlier than its predecessor allows is explained, with a way out.
+  await expect(date("Inicio", "Zapatas")).toHaveText("24 nov");
+  await date("Inicio", "Zapatas").click();
+  await page.getByLabel("Inicio de Zapatas").fill("2026-11-20");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByText(
+      /«Zapatas» no puede empezar el .*20 de nov porque depende de «Desmonte y limpieza»/,
+    ),
+  ).toBeVisible();
+  await expect(date("Inicio", "Zapatas")).toHaveText("24 nov");
+  await page
+    .getByRole("button", { name: /Quitar el vínculo con/ })
+    .click();
+  await expect(date("Inicio", "Zapatas")).toHaveText("20 nov");
 });
