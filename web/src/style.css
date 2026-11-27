@@ -1336,6 +1336,10 @@ button.danger:hover {
   font-weight: 650;
   letter-spacing: -0.01em;
 }
+.shares-head .notice {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+}
 .shares-head small {
   flex-basis: 100%;
   min-height: 1.5em;
@@ -1347,11 +1351,11 @@ button.danger:hover {
   height: 28px;
 }
 .shares-bar span {
+  /* No padding here: a segment's width is only its share. */
   flex: 0 1 0;
   min-width: 0;
   display: flex;
   align-items: center;
-  padding: 0 8px;
   overflow: hidden;
   border-radius: 4px;
   cursor: default;
@@ -1372,6 +1376,7 @@ button.danger:hover {
   opacity: 0.35;
 }
 .shares-bar b {
+  padding-left: 8px;
   color: #fff;
   font-size: 12px;
   font-weight: 650;

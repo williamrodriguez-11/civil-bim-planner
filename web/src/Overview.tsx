@@ -117,6 +117,8 @@ function LevelCategoryFix({
   );
 }
 const SERIES = 6;
+// Internal id of the folded segment; a level name can never contain «\u0000».
+const REST = "\u0000otros";
 const pct = (n: number) =>
   n.toLocaleString("es-CO", { maximumFractionDigits: 1 }) + " %";
 
@@ -160,9 +162,11 @@ function Shares({
   const blocks = [
     ...shown.map((p) => ({ key: p.name, name: p.name, value: p.value ?? 0 })),
     ...(rest.length
-      ? [{ key: "Otros", name: `Otros (${rest.length})`, value: restValue }]
+      ? [{ key: REST, name: `Otros (${rest.length})`, value: restValue }]
       : []),
   ];
+  // Parts whose measurement is incomplete cannot be placed in the whole.
+  const incomplete = parts.filter((p) => p.value === null).length;
   const focus = blocks.find((b) => b.key === active);
   const summary = blocks
     .map((b) => `${b.name}: ${pct((b.value / total) * 100)}`)
@@ -170,7 +174,7 @@ function Shares({
   return (
     <div className="shares" onMouseLeave={() => setActive(null)}>
       <div className="shares-head">
-        <span>Total</span>
+        <span>{incomplete ? "Total medido" : "Total"}</span>
         <strong>
           {fmt(total)} {unit}
         </strong>
@@ -181,6 +185,12 @@ function Shares({
               )}`
             : "Pasa el cursor por el gráfico o la lista"}
         </small>
+        {!!incomplete && (
+          <p className="notice">
+            {incomplete} de {parts.length} grupos no tienen la medición completa
+            y no entran en el reparto. Los porcentajes son sobre lo medido.
+          </p>
+        )}
       </div>
       <div className="shares-bar" role="img" aria-label={"Reparto: " + summary}>
         {blocks.map((b) => {
@@ -191,9 +201,10 @@ function Shares({
               tabIndex={0}
               className={active ? (active === b.key ? "on" : "off") : ""}
               style={{
-                flexGrow: grown ? b.value : 0,
+                // Normalized so the parts always fill the whole bar.
+                flexGrow: grown ? b.value / total : 0,
                 background:
-                  b.key === "Otros" ? "var(--series-other)" : color(b.key),
+                  b.key === REST ? "var(--series-other)" : color(b.key),
               }}
               title={`${b.name} · ${fmt(b.value)} ${unit} · ${pct(share)}`}
               onMouseEnter={() => setActive(b.key)}
@@ -218,7 +229,7 @@ function Shares({
           const key = shown.some((s) => s.name === p.name)
             ? p.name
             : p.value
-              ? "Otros"
+              ? REST
               : null;
           const share = p.value && total ? (p.value / total) * 100 : null;
           return (
@@ -232,7 +243,7 @@ function Shares({
               <i
                 style={{
                   background: key
-                    ? key === "Otros"
+                    ? key === REST
                       ? "var(--series-other)"
                       : color(p.name)
                     : "transparent",
