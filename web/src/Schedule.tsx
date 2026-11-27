@@ -1,699 +1,178 @@
-import { Fragment, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Diamond,
   Download,
+  Flag,
+  FolderPlus,
+  Link2,
+  Maximize2,
   Plus,
-  SlidersHorizontal,
+  Save,
+  Trash2,
   X,
 } from "lucide-react";
 import {
+  api,
   cleanError,
-  dateLabel,
   fmt,
-  type Task,
-  type Plan,
-  type State,
+  type ErrorInfo,
   type Mutation,
+  type Phase,
+  type Plan,
+  type Scheduled,
+  type State,
+  type Task,
+  type WorkCalendar,
 } from "./model";
-import { Modal, Empty } from "./shared";
+import { Modal } from "./shared";
+import { availableMeasures, unitLabel } from "./measurements";
 import {
-  availableMeasures,
-  unitLabel,
-  summarizeMeasurements,
-  measurementTotal,
-} from "./measurements";
+  buildTree,
+  chain,
+  group,
+  insert,
+  move,
+  parsePaste,
+  remove,
+  renamePhase,
+  renumber,
+  rows as outlineRows,
+  ungroup,
+  type Node,
+} from "./outline";
 
-const relations: Record<
+const RELATIONS: Record<
   string,
-  { label: string; help: string; short: string }
+  { short: string; label: string; sentence: string }
 > = {
   FS: {
-    label: "Fin a comienzo (FC)",
     short: "FC",
-    help: "Esta actividad comienza después de que termina la predecesora.",
+    label: "Fin a comienzo (FC)",
+    sentence: "Empieza cuando termine",
   },
   SS: {
-    label: "Comienzo a comienzo (CC)",
     short: "CC",
-    help: "Esta actividad puede comenzar cuando comienza la predecesora.",
+    label: "Comienzo a comienzo (CC)",
+    sentence: "Empieza cuando empiece",
   },
   FF: {
-    label: "Fin a fin (FF)",
     short: "FF",
-    help: "Esta actividad no puede terminar antes de que termine la predecesora.",
+    label: "Fin a fin (FF)",
+    sentence: "Termina cuando termine",
   },
   SF: {
-    label: "Comienzo a fin (CF)",
     short: "CF",
-    help: "Esta actividad no puede terminar antes de que comience la predecesora.",
+    label: "Comienzo a fin (CF)",
+    sentence: "Termina cuando empiece",
   },
 };
+const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const ROW = 38;
+const HEAD = 46;
+const SCALES = { day: 30, week: 11, month: 3.2 } as const;
+type Scale = keyof typeof SCALES | "fit";
+type Timeline = { schedule: Scheduled[]; phases: Phase[] };
+type Active = { kind: "task"; id: number } | { kind: "phase"; code: string };
+type Problem = { message: string; info?: ErrorInfo };
 
-function Calendar({
-  plan,
-  save,
-  close,
-}: {
-  plan: Plan;
-  save: (p: Plan) => Promise<void>;
-  close: () => void;
-}) {
-  const [draftPlan, setDraftPlan] = useState(plan),
-    [holiday, setHoliday] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  return (
-    <Modal title="Calendario y seguimiento" close={close}>
-      <form
-        className="calendar-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          try {
-            await save(draftPlan);
-            close();
-          } catch (e) {
-            setError(cleanError(e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <div className="calendar-dates">
-          <label>
-            Inicio del proyecto
-            <input
-              type="date"
-              required
-              value={draftPlan.start}
-              onChange={(e) =>
-                setDraftPlan({ ...draftPlan, start: e.target.value })
-              }
-            />
-          </label>
-          <label>
-            Fecha de seguimiento (opcional)
-            <input
-              type="date"
-              value={draftPlan.status_date ?? ""}
-              onChange={(e) =>
-                setDraftPlan({
-                  ...draftPlan,
-                  status_date: e.target.value || null,
-                })
-              }
-              aria-describedby="status-date-help"
-            />
-          </label>
-        </div>
-        <p id="status-date-help" className="field-help">
-          Elige hasta qué día quieres evaluar el avance previsto. Puedes dejar
-          la fecha de seguimiento vacía para consultar el avance a hoy.
-        </p>
-        <h3>Días de trabajo</h3>
-        <div className="weekdays">
-          {["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"].map((d, i) => (
-            <button
-              type="button"
-              key={d}
-              aria-pressed={draftPlan.weekdays.includes(i)}
-              onClick={() =>
-                setDraftPlan({
-                  ...draftPlan,
-                  weekdays: draftPlan.weekdays.includes(i)
-                    ? draftPlan.weekdays.filter((j) => j !== i)
-                    : [...draftPlan.weekdays, i],
-                })
-              }
-            >
-              {d}
-            </button>
-          ))}
-        </div>
-        <div className="holiday-entry">
-          <label>
-            Fecha no laborable
-            <input
-              type="date"
-              value={holiday}
-              onChange={(e) => setHoliday(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            disabled={!holiday}
-            onClick={() => {
-              setDraftPlan({
-                ...draftPlan,
-                holidays: [...new Set([...draftPlan.holidays, holiday])].sort(),
-              });
-              setHoliday("");
-            }}
-          >
-            Añadir fecha
-          </button>
-        </div>
-        <div className="chips">
-          {draftPlan.holidays.map((d) => (
-            <button
-              type="button"
-              key={d}
-              aria-label={"Quitar fecha " + d}
-              onClick={() =>
-                setDraftPlan({
-                  ...draftPlan,
-                  holidays: draftPlan.holidays.filter((h) => h !== d),
-                })
-              }
-            >
-              {dateLabel(d)}
-              <X size={12} />
-            </button>
-          ))}
-        </div>
-        {error && <p className="error">{error}</p>}
-        <button
-          className="primary"
-          disabled={busy || !draftPlan.weekdays.length}
-        >
-          Guardar calendario
-        </button>
-      </form>
-    </Modal>
+const DAY = 86400000;
+const toDay = (s: string) => Math.round(Date.parse(s + "T00:00:00Z") / DAY);
+const fromDay = (n: number) => new Date(n * DAY).toISOString().slice(0, 10);
+const label = (s: string, options: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat("es-CO", { timeZone: "UTC", ...options }).format(
+    new Date(s + "T00:00:00Z"),
   );
+const shortDate = (s: string) =>
+  label(s, { weekday: "short", day: "numeric", month: "short" });
+const cellDate = (s: string) =>
+  `${Number(s.slice(8, 10))} ${label(s, { month: "short" }).replace(".", "")}`;
+const longDate = (s: string) =>
+  label(s, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const days = (n: number) => `${n} ${Math.abs(n) === 1 ? "día" : "días"}`;
+const today = () => new Date().toISOString().slice(0, 10);
+
+/** Only named activities reach the server; links to unnamed rows drop. */
+function cleaned(plan: Plan): Plan {
+  const kept = plan.tasks.filter((t) => t.name.trim());
+  const ids = new Set(kept.map((t) => t.id));
+  return {
+    ...plan,
+    tasks: kept.map((t) => ({
+      ...t,
+      name: t.name.trim(),
+      links: t.links.filter((l) => ids.has(l.predecessor)),
+    })),
+  };
 }
-function Editor({
-  initial,
-  state,
-  close,
-  save,
-}: {
-  initial: Task;
-  state: State;
-  close: () => void;
-  save: (t: Task, groups: Record<string, string>) => Promise<void>;
-}) {
-  const [groups, setGroups] = useState(state.plan.groups);
-  const [task, setTask] = useState(initial),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const patch = (p: Partial<Task>) => setTask({ ...task, ...p });
-  const scheduled = state.schedule.find((t) => t.id === task.id);
-  const linkedRows = task.quantity
-    ? (state.results[task.quantity.table]?.detail ?? []).filter(
-        (r) =>
-          (!task.quantity!.level || r.Nivel === task.quantity!.level) &&
-          (!task.quantity!.category || r.Categoría === task.quantity!.category),
+
+function order(tree: Node[]): number[] {
+  const out: number[] = [];
+  const walk = (nodes: Node[]) =>
+    nodes.forEach((n) =>
+      n.kind === "task" ? out.push(n.id) : walk(n.children),
+    );
+  walk(tree);
+  return out;
+}
+
+/** Plain-language reasons for an activity's dates. */
+function explain(row: Scheduled, names: Map<number, string>, plan: Plan) {
+  const lines: string[] = [];
+  const d = row.driver;
+  if (!d || d.type === "start")
+    lines.push(`Empieza con el proyecto, el ${longDate(plan.start)}.`);
+  else if (d.type === "earliest")
+    lines.push(`Restricción: no puede comenzar antes del ${longDate(d.date)}.`);
+  else if (d.type === "fixed_finish")
+    lines.push(`Restricción: debe finalizar el ${longDate(d.date)}.`);
+  else {
+    const r = RELATIONS[d.relation];
+    const wait =
+      d.lag > 0
+        ? `, más ${days(d.lag)} laborables de espera`
+        : d.lag < 0
+          ? `, con ${days(-d.lag)} laborables de adelanto`
+          : "";
+    lines.push(
+      `${r.sentence} «${names.get(d.predecessor) ?? "?"}» (${r.short})${wait}.`,
+    );
+  }
+  const describe = (list: { date: string; kind: string }[]) =>
+    list
+      .map(
+        (n) =>
+          `${label(n.date, { weekday: "long", day: "numeric", month: "short" })} ${
+            n.kind === "festivo" ? "es festivo" : "no es laborable"
+          }`,
       )
-    : [];
-  const linkedMeasures = summarizeMeasurements(linkedRows).filter(
-    (m) => m.unit === task.quantity?.unit,
-  );
-  const linkedTotal =
-    linkedMeasures.length === 1 ? measurementTotal(linkedMeasures[0]) : null;
-
-  return (
-    <Modal
-      className="task-editor"
-      title={
-        state.plan.tasks.some((a) => a.id === task.id)
-          ? "Editar actividad"
-          : "Nueva actividad"
-      }
-      close={close}
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          try {
-            await save(task, groups);
-            close();
-          } catch (e) {
-            setError(cleanError(e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <p className="field-help">
-          Programa la actividad con su duración, calendario y predecesoras. El
-          cronograma calcula las fechas de comienzo y fin.
-        </p>
-        {scheduled && (
-          <div className="schedule-preview">
-            <span>
-              Comienzo calculado <strong>{dateLabel(scheduled.start)}</strong>
-            </span>
-            <span>
-              Fin calculado <strong>{dateLabel(scheduled.finish)}</strong>
-            </span>
-            <small>Fechas del último guardado; se recalculan al guardar.</small>
-          </div>
-        )}
-        <fieldset className="task-section">
-          <legend>1. Datos de la actividad</legend>
-          <label>
-            Nombre de la actividad
-            <input
-              required
-              maxLength={160}
-              autoFocus
-              placeholder="Ej. Fundida de zapatas"
-              value={task.name}
-              onChange={(e) => patch({ name: e.target.value })}
-            />
-          </label>
-          <div className="form-grid">
-            <label>
-              Código EDT
-              <input
-                required
-                pattern="[1-9][0-9]*(\.[1-9][0-9]*)*"
-                placeholder="1.2.1"
-                value={task.wbs}
-                aria-describedby="wbs-help"
-                onChange={(e) => patch({ wbs: e.target.value })}
-              />
-            </label>
-            <label>
-              Duración (días laborables)
-              <input
-                type="number"
-                min="1"
-                max="3650"
-                required
-                disabled={!!task.quantity}
-                value={
-                  task.quantity
-                    ? (scheduled?.duration ?? task.duration)
-                    : task.duration
-                }
-                onChange={(e) => patch({ duration: Number(e.target.value) })}
-              />
-            </label>
-          </div>
-          <p id="wbs-help" className="field-help">
-            EDT organiza las fases y actividades: 1.1 y 1.2 pertenecen a la fase
-            1. La duración cuenta solo los días laborables del calendario.
-          </p>
-          {task.quantity && (
-            <p className="field-help">
-              La duración se calcula con la cantidad de obra y el rendimiento al
-              guardar.
-            </p>
-          )}
-        </fieldset>
-        <fieldset className="task-section">
-          <legend>2. Seguimiento de la ejecución</legend>
-          <div className="progress-editor">
-            <input
-              type="range"
-              aria-label="Avance realizado"
-              min="0"
-              max="100"
-              step="1"
-              value={task.progress}
-              onChange={(e) => patch({ progress: Number(e.target.value) })}
-            />
-            <label>
-              % completado
-              <input
-                aria-describedby="progress-help"
-                type="number"
-                min="0"
-                max="100"
-                step="any"
-                required
-                value={task.progress}
-                onChange={(e) => patch({ progress: +e.target.value })}
-              />
-            </label>
-          </div>
-          <p id="progress-help" className="field-help">
-            Registra el avance observado en obra. 0% significa sin iniciar y
-            100% significa terminada.
-          </p>
-          <div className="chips" aria-label="Registrar porcentaje completado">
-            {[0, 25, 50, 75, 100].map((n) => (
-              <button
-                type="button"
-                key={n}
-                aria-pressed={task.progress === n}
-                onClick={() => patch({ progress: n })}
-              >
-                {n}%
-              </button>
-            ))}
-          </div>
-          <p className="field-help">
-            El % previsto se calcula según las fechas y el calendario. La
-            cantidad BIM se usa para estimar duración; no mide automáticamente
-            la obra ejecutada.
-          </p>
-        </fieldset>
-        <details className="task-section" open={task.wbs.includes(".")}>
-          <summary>Organización por fases y capítulos</summary>
-          {task.wbs
-            .split(".")
-            .slice(0, -1)
-            .map((_, i) => {
-              const code = task.wbs
-                .split(".")
-                .slice(0, i + 1)
-                .join(".");
-              return (
-                <label key={code}>
-                  {i === 0 ? "Fase" : "Capítulo"} {code}
-                  <input
-                    value={groups[code] ?? ""}
-                    placeholder={"Grupo " + code}
-                    onChange={(e) =>
-                      setGroups({ ...groups, [code]: e.target.value })
-                    }
-                  />
-                </label>
-              );
-            })}
-          {!task.wbs.includes(".") && (
-            <p className="field-help">
-              Usa un código como 1.1 para asignar esta actividad a una fase.
-            </p>
-          )}
-        </details>
-        <details
-          className="task-section"
-          open={!!initial.earliest || !!initial.fixed_finish}
-        >
-          <summary>Restricciones de fechas (opcional)</summary>
-          <p className="field-help">
-            Déjalas vacías para programar lo antes posible. Las predecesoras y
-            el calendario siempre se respetan.
-          </p>
-          <div className="form-grid">
-            <label>
-              No comenzar antes del
-              <input
-                type="date"
-                value={task.earliest ?? ""}
-                onChange={(e) => patch({ earliest: e.target.value || null })}
-              />
-            </label>
-            <label>
-              Debe finalizar el
-              <input
-                type="date"
-                value={task.fixed_finish ?? ""}
-                onChange={(e) =>
-                  patch({ fixed_finish: e.target.value || null })
-                }
-              />
-            </label>
-          </div>
-          <p className="field-help">
-            “No comenzar antes del” permite comenzar más tarde. “Debe finalizar
-            el” obliga a terminar exactamente ese día laborable; si las
-            dependencias lo impiden, se avisará al guardar.
-          </p>
-        </details>
-        <details className="task-section" open={!!initial.quantity}>
-          <summary>Calcular días con las cantidades de la tabla</summary>
-          <p className="field-help">
-            Selecciona una tabla y cuánta obra realiza la cuadrilla cada día.
-            Por ejemplo, 30 m³ a 5 m³ por día requieren 6 días laborables.
-          </p>
-          <label>
-            Origen de la duración
-            <select
-              value={task.quantity?.table ?? ""}
-              onChange={(e) =>
-                patch({
-                  quantity: e.target.value
-                    ? {
-                        table: +e.target.value,
-                        unit: availableMeasures(
-                          state.results[+e.target.value].detail,
-                        )[0].unit,
-                        rate: 0,
-                        level: "",
-                      }
-                    : null,
-                })
-              }
-            >
-              <option value="">Duración manual</option>
-              {state.tables
-                .filter((s) => state.results[s.id]?.detail.length)
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} · {s.mapping?.category}
-                  </option>
-                ))}
-            </select>
-          </label>
-          {task.quantity && linkedTotal !== null && task.quantity.rate > 0 && (
-            <p className="notice">
-              {fmt(linkedTotal)} {unitLabel(task.quantity.unit)} ÷{" "}
-              {fmt(task.quantity.rate)} {unitLabel(task.quantity.unit)}/día ={" "}
-              <strong>
-                {Math.ceil(linkedTotal / task.quantity.rate)} días laborables
-              </strong>
-              .
-            </p>
-          )}
-          {task.quantity && (
-            <div className="form-grid">
-              <label>
-                Nivel
-                <select
-                  value={task.quantity.level}
-                  onChange={(e) =>
-                    patch({
-                      quantity: { ...task.quantity!, level: e.target.value },
-                    })
-                  }
-                >
-                  <option value="">Todos los niveles</option>
-                  {[
-                    ...new Set(
-                      state.results[task.quantity.table].detail.map((r) =>
-                        String(r.Nivel),
-                      ),
-                    ),
-                  ].map((n) => (
-                    <option key={n}>{n}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Categoría vinculada
-                <select
-                  value={task.quantity.category ?? ""}
-                  onChange={(e) =>
-                    patch({
-                      quantity: { ...task.quantity!, category: e.target.value },
-                    })
-                  }
-                >
-                  <option value="">Todas las categorías</option>
-                  {Array.from(
-                    new Set(
-                      state.results[task.quantity.table].detail.map((r) =>
-                        String(r.Categoría),
-                      ),
-                    ),
-                  ).map((k) => (
-                    <option key={k}>{k}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Magnitud
-                <select
-                  value={task.quantity.unit}
-                  onChange={(e) =>
-                    patch({
-                      quantity: { ...task.quantity!, unit: e.target.value },
-                    })
-                  }
-                >
-                  {availableMeasures(
-                    state.results[task.quantity.table].detail,
-                  ).map((m) => (
-                    <option key={m.unit} value={m.unit}>
-                      {m.label} ({unitLabel(m.unit)})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Rendimiento ({unitLabel(task.quantity.unit)}/día)
-                <input
-                  required
-                  type="number"
-                  min="0.000000001"
-                  step="any"
-                  value={task.quantity.rate || ""}
-                  onChange={(e) =>
-                    patch({
-                      quantity: { ...task.quantity!, rate: +e.target.value },
-                    })
-                  }
-                />
-              </label>
-              <p>
-                Días = cantidad ÷ rendimiento, redondeados hacia arriba.
-                {state.results[task.quantity.table].issues.some(
-                  (r) => r.Estado === "Rechazada",
-                ) &&
-                  " La fuente contiene filas rechazadas. Se usa la cantidad parcial validada."}
-              </p>
-            </div>
-          )}
-        </details>
-        <fieldset className="task-section">
-          <legend>3. Predecesoras</legend>
-          <p className="field-help">
-            Actividades que condicionan a esta. Por ejemplo: terminar la
-            excavación antes de comenzar la cimentación.
-          </p>
-          {task.links.map((l, i) => (
-            <div className="dependency" key={i}>
-              <div className="tools">
-                <select
-                  aria-label="Predecesora"
-                  value={l.predecessor}
-                  onChange={(e) =>
-                    patch({
-                      links: task.links.map((x, j) =>
-                        i === j ? { ...x, predecessor: +e.target.value } : x,
-                      ),
-                    })
-                  }
-                >
-                  {state.plan.tasks
-                    .filter(
-                      (a) =>
-                        a.id !== task.id &&
-                        (a.id === l.predecessor ||
-                          !task.links.some(
-                            (link) => link.predecessor === a.id,
-                          )),
-                    )
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.wbs} · {a.name}
-                      </option>
-                    ))}
-                </select>
-                <select
-                  aria-label="Relación"
-                  value={l.relation}
-                  onChange={(e) =>
-                    patch({
-                      links: task.links.map((x, j) =>
-                        i === j ? { ...x, relation: e.target.value } : x,
-                      ),
-                    })
-                  }
-                >
-                  {Object.entries(relations).map(([value, r]) => (
-                    <option key={value} value={value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-                <label>
-                  Desfase (días laborables)
-                  <input
-                    type="number"
-                    required
-                    min="-3650"
-                    max="3650"
-                    value={l.lag}
-                    onChange={(e) =>
-                      patch({
-                        links: task.links.map((x, j) =>
-                          i === j ? { ...x, lag: +e.target.value } : x,
-                        ),
-                      })
-                    }
-                  />
-                </label>
-                <button
-                  type="button"
-                  aria-label="Quitar vínculo"
-                  onClick={() =>
-                    patch({ links: task.links.filter((_, j) => i !== j) })
-                  }
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <p className="field-help">
-                {relations[l.relation].help} Desfase: 0 sin espera; +2 espera
-                dos días laborables; −2 adelanta dos días laborables.
-              </p>
-            </div>
-          ))}
-          <button
-            type="button"
-            disabled={
-              !state.plan.tasks.some(
-                (a) =>
-                  a.id !== task.id &&
-                  !task.links.some((l) => l.predecessor === a.id),
-              )
-            }
-            onClick={() => {
-              const a = state.plan.tasks.find(
-                (a) =>
-                  a.id !== task.id &&
-                  !task.links.some((l) => l.predecessor === a.id),
-              );
-              if (a)
-                patch({
-                  links: [
-                    ...task.links,
-                    { predecessor: a.id, relation: "FS", lag: 0 },
-                  ],
-                });
-            }}
-          >
-            Añadir predecesora
-          </button>
-          {!state.plan.tasks.some((a) => a.id !== task.id) && (
-            <p className="field-help">
-              Crea otra actividad para poder vincularla como predecesora.
-            </p>
-          )}
-        </fieldset>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="actions">
-          <button type="button" onClick={close}>
-            Cancelar
-          </button>
-          <button className="primary" disabled={busy}>
-            Guardar actividad
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
+      .join("; ");
+  if (row.shifted?.length)
+    lines.push(
+      `Por eso pasó al ${longDate(row.start)}: ${describe(row.shifted)}.`,
+    );
+  if (row.spanned?.length)
+    lines.push(
+      `Dura ${days(row.duration)} laborables y ocupa ${days(
+        toDay(row.finish) - toDay(row.start) + 1,
+      )} de calendario porque ${describe(row.spanned)}.`,
+    );
+  if (row.calendar)
+    lines.push(
+      `Usa el calendario «${row.calendar}» en lugar del del proyecto.`,
+    );
+  return lines;
 }
-const compactDate = (s: string) =>
-  s.slice(0, 10).split("-").reverse().join("/");
-const axisDate = (s: string) =>
-  new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
-    month: "short",
-    timeZone: "UTC",
-  }).format(new Date(s));
-const day = (s: string) => Date.parse(s + "T00:00:00Z") / 86400000;
+
 export function Schedule({
   state,
   mutate,
@@ -701,366 +180,1794 @@ export function Schedule({
   state: State;
   mutate: Mutation;
 }) {
-  const [edit, setEdit] = useState<Task | null>(null),
-    [calendar, setCalendar] = useState(false),
-    [zoom, setZoom] = useState(100),
-    [critical, setCritical] = useState(false),
-    [query, setQuery] = useState(""),
-    [columns, setColumns] = useState(false);
-  const rows = state.schedule.filter(
-    (a) =>
-      (!critical || a.critical) &&
-      (a.name + " " + a.wbs)
-        .toLocaleLowerCase()
-        .includes(query.toLocaleLowerCase()),
+  const pid = state.project.id;
+  const storeKey = `civil-plan-draft:${pid}`;
+  // An unsaved draft survives a module change or a reload in this tab.
+  const restored = useMemo(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(storeKey) ?? "null");
+      return saved?.revision === state.project.revision
+        ? (saved.plan as Plan)
+        : null;
+    } catch {
+      return null;
+    }
+    // Only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [draft, setDraftState] = useState<Plan>(restored ?? state.plan);
+  const [dirty, setDirty] = useState(!!restored);
+  const [timeline, setTimeline] = useState<Timeline>({
+    schedule: state.schedule,
+    phases: state.phases ?? [],
+  });
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [durations, setDurations] = useState<Record<number, string>>({});
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [active, setActive] = useState<Active | null>(null);
+  const [scale, setScale] = useState<Scale>("week");
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [phaseName, setPhaseName] = useState<string | null>(null);
+  const focusNext = useRef<{ id: number; field: string } | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(900);
+
+  function setDraft(plan: Plan) {
+    setDraftState(plan);
+    setDirty(true);
+    setNotice("");
+    try {
+      sessionStorage.setItem(
+        storeKey,
+        JSON.stringify({ revision: state.project.revision, plan }),
+      );
+    } catch {
+      // Keeping the draft across reloads is only a convenience.
+    }
+  }
+
+  // Saved elsewhere (or just saved here): show the stored plan.
+  useEffect(() => {
+    if (dirty) return;
+    setDraftState(state.plan);
+    setTimeline({ schedule: state.schedule, phases: state.phases ?? [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.project.revision]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  // Durations typed but not valid yet stay in the cell and block the preview.
+  const localErrors = useMemo(() => {
+    const errors: Record<number, Record<string, string>> = {};
+    for (const [id, raw] of Object.entries(durations))
+      if (!/^\d{1,4}$/.test(raw.trim()) || Number(raw) > 3650)
+        errors[+id] = {
+          duration: "Escribe días laborables enteros (0 para un hito).",
+        };
+    return errors;
+  }, [durations]);
+
+  // Live recalculation of the draft on the server, without saving it.
+  useEffect(() => {
+    if (!dirty || Object.keys(localErrors).length) return;
+    let live = true;
+    const id = window.setTimeout(async () => {
+      try {
+        const result = await api<Timeline>(`/projects/${pid}/plan/preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cleaned(draft)),
+        });
+        if (live) {
+          setTimeline(result);
+          setProblem(null);
+        }
+      } catch (e) {
+        if (live)
+          setProblem({
+            message: cleanError(e),
+            info: (e as Error & { info?: ErrorInfo }).info,
+          });
+      }
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(id);
+    };
+  }, [draft, dirty, localErrors, pid]);
+
+  useEffect(() => {
+    const target = focusNext.current;
+    if (!target) return;
+    focusNext.current = null;
+    document.getElementById(`cell-${target.id}-${target.field}`)?.focus();
+  });
+
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const tree = useMemo(() => buildTree(draft), [draft]);
+  const visible = useMemo(() => outlineRows(tree, folded), [tree, folded]);
+  const sequence = useMemo(() => order(tree), [tree]);
+  const tasks = useMemo(
+    () => new Map(draft.tasks.map((t) => [t.id, t])),
+    [draft.tasks],
   );
-  const now = new Date();
-  const cutoff =
-    state.plan.status_date ||
-    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const start = Math.min(...state.schedule.map((r) => day(r.start))),
-    end = Math.max(...state.schedule.map((r) => day(r.finish))),
-    span = end - start + 1;
-  const cutoffPosition = ((day(cutoff) - start + 1) / span) * 100;
-  const save = async (p: Plan) => {
-    await mutate("/plan", p, "PUT");
-  };
-  function create() {
-    const id = Math.max(0, ...state.plan.tasks.map((t) => t.id)) + 1;
-    const wbs = String(
-      Math.max(0, ...state.plan.tasks.map((t) => +t.wbs.split(".")[0])) + 1,
+  const computed = useMemo(
+    () => new Map(timeline.schedule.map((r) => [r.id, r])),
+    [timeline],
+  );
+  const phaseRows = useMemo(
+    () => new Map(timeline.phases.map((p) => [p.code, p])),
+    [timeline],
+  );
+  const names = useMemo(
+    () => new Map(draft.tasks.map((t) => [t.id, t.name || "Sin nombre"])),
+    [draft.tasks],
+  );
+
+  function restructure(next: Node[], change?: (plan: Plan) => Plan) {
+    const { plan, codes } = renumber(next, change ? change(draft) : draft);
+    setFolded(
+      (f) =>
+        new Set([...f].map((c) => codes.get(c)).filter(Boolean) as string[]),
     );
-    setEdit({
-      id,
-      wbs,
-      name: "",
-      duration: 1,
+    if (active?.kind === "phase" && codes.get(active.code))
+      setActive({ kind: "phase", code: codes.get(active.code)! });
+    setDraft(plan);
+  }
+
+  function patchTask(id: number, change: Partial<Task>) {
+    setDraft({
+      ...draft,
+      tasks: draft.tasks.map((t) => (t.id === id ? { ...t, ...change } : t)),
+    });
+  }
+
+  function addTasks(
+    items: { name: string; duration: number }[],
+    at: { after: number } | { phase: string } | null,
+    focus = true,
+  ) {
+    let id = Math.max(0, ...draft.tasks.map((t) => t.id));
+    const created: Task[] = items.map((item) => ({
+      id: ++id,
+      name: item.name,
+      wbs: "1",
+      duration: item.duration,
       earliest: null,
+      fixed_finish: null,
       progress: 0,
       links: [],
       quantity: null,
+      calendar: "",
+    }));
+    restructure(
+      insert(
+        tree,
+        created.map((t) => t.id),
+        at,
+      ),
+      (p) => ({ ...p, tasks: [...p.tasks, ...created] }),
+    );
+    if (focus && created.length)
+      focusNext.current = { id: created[0].id, field: "name" };
+    return created;
+  }
+
+  function addLink(to: number, from: number) {
+    const t = tasks.get(to)!;
+    if (t.links.some((l) => l.predecessor === from)) return;
+    patchTask(to, {
+      links: [...t.links, { predecessor: from, relation: "FS", lag: 0 }],
     });
   }
+
+  function removeTasks(ids: number[]) {
+    const drop = new Set(ids);
+    restructure(remove(tree, ids), (p) => ({
+      ...p,
+      tasks: p.tasks
+        .filter((t) => !drop.has(t.id))
+        .map((t) => ({
+          ...t,
+          links: t.links.filter((l) => !drop.has(l.predecessor)),
+        })),
+    }));
+    setSelected(new Set());
+    if (active?.kind === "task" && drop.has(active.id)) setActive(null);
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    const text = e.clipboardData.getData("text/plain");
+    if (!/[\n\t]/.test(text.trim())) return; // a single value: normal paste
+    const items = parsePaste(text);
+    if (!items.length) return;
+    e.preventDefault();
+    const focused = Number(
+      (document.activeElement as HTMLElement | null)?.dataset.task,
+    );
+    const current = tasks.get(focused);
+    if (current && !current.name.trim()) {
+      // Fill the empty row first, then add the rest after it.
+      const [first, ...rest] = items;
+      const filled = {
+        ...draft,
+        tasks: draft.tasks.map((t) =>
+          t.id === focused
+            ? { ...t, name: first.name, duration: first.duration }
+            : t,
+        ),
+      };
+      let id = Math.max(0, ...draft.tasks.map((t) => t.id));
+      const created: Task[] = rest.map((item) => ({
+        id: ++id,
+        name: item.name,
+        wbs: "1",
+        duration: item.duration,
+        earliest: null,
+        fixed_finish: null,
+        progress: 0,
+        links: [],
+        quantity: null,
+        calendar: "",
+      }));
+      const { plan, codes } = renumber(
+        insert(
+          tree,
+          created.map((t) => t.id),
+          { after: focused },
+        ),
+        { ...filled, tasks: [...filled.tasks, ...created] },
+      );
+      setFolded(
+        (f) =>
+          new Set([...f].map((c) => codes.get(c)).filter(Boolean) as string[]),
+      );
+      setDraft(plan);
+    } else addTasks(items, current ? { after: focused } : null, false);
+    setNotice(
+      `Se pegaron ${items.length} ${items.length === 1 ? "actividad" : "actividades"}.`,
+    );
+  }
+
+  function onCellKey(e: KeyboardEvent<HTMLInputElement>, id: number) {
+    const field = e.currentTarget.dataset.field!;
+    const taskRows = visible.filter((r) => r.kind === "task") as {
+      id: number;
+    }[];
+    const here = taskRows.findIndex((r) => r.id === id);
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!tasks.get(id)?.name.trim()) return;
+      const next = taskRows[here + 1];
+      if (next && !tasks.get(next.id)?.name.trim())
+        focusNext.current = { id: next.id, field: "name" };
+      else addTasks([{ name: "", duration: 1 }], { after: id });
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const next = taskRows[here + (e.key === "ArrowDown" ? 1 : -1)];
+      if (next) {
+        e.preventDefault();
+        document.getElementById(`cell-${next.id}-${field}`)?.focus();
+      }
+    }
+  }
+
+  function toggleSelect(id: number, range: boolean) {
+    const next = new Set(selected);
+    if (range && anchor !== null) {
+      const a = sequence.indexOf(anchor),
+        b = sequence.indexOf(id);
+      for (const i of sequence.slice(Math.min(a, b), Math.max(a, b) + 1))
+        next.add(i);
+    } else if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+    setAnchor(id);
+  }
+
+  async function save() {
+    setSaving(true);
+    setNotice("");
+    try {
+      await mutate("/plan", cleaned(draft), "PUT");
+      try {
+        sessionStorage.removeItem(storeKey);
+      } catch {
+        // Nothing to clean.
+      }
+      setDirty(false);
+      setDurations({});
+      setNotice("Cronograma guardado.");
+    } catch (e) {
+      setProblem({
+        message: cleanError(e),
+        info: (e as Error & { info?: ErrorInfo }).info,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function setBaseline(clear: boolean) {
+    setDraft({
+      ...draft,
+      baseline: clear
+        ? {}
+        : Object.fromEntries(
+            timeline.schedule.map((r) => [
+              r.id,
+              { start: r.start, finish: r.finish, duration: r.duration },
+            ]),
+          ),
+      baseline_saved: clear ? null : today(),
+    });
+  }
+
+  // Errors per cell: the server's (one activity and field, or a cycle)
+  // plus durations that are not valid numbers yet.
+  const cellError = (id: number, field: string) => {
+    if (localErrors[id]?.[field]) return localErrors[id][field];
+    const info = problem?.info;
+    if (!info) return "";
+    if (field === "links" && info.cycle.includes(id)) return problem!.message;
+    if (info.task !== id) return "";
+    const where =
+      info.field === "wbs" || info.field === "id"
+        ? "name"
+        : info.field === "duration"
+          ? "duration"
+          : info.field === "links"
+            ? "links"
+            : "row";
+    return where === field ? problem!.message : "";
+  };
+
+  // ----- Gantt geometry -----
+  const starts = [
+    draft.start,
+    ...timeline.schedule.map((r) => r.start),
+    ...timeline.schedule.flatMap((r) => (r.baseline ? [r.baseline.start] : [])),
+  ];
+  const ends = [
+    ...timeline.schedule.map((r) => r.finish),
+    ...timeline.schedule.flatMap((r) =>
+      r.baseline ? [r.baseline.finish] : [],
+    ),
+    ...(draft.status_date ? [draft.status_date] : []),
+  ];
+  const origin = Math.min(...starts.map(toDay)) - 2;
+  const last = Math.max(origin + 28, ...ends.map(toDay)) + 4;
+  const span = last - origin + 1;
+  const tableWidth =
+    width < 760 ? Math.max(320, width - 40) : width < 1250 ? 580 : 640;
+  const px =
+    scale === "fit"
+      ? Math.max(1.2, (width - tableWidth - 4) / span)
+      : SCALES[scale];
+  const timelineWidth = Math.ceil(span * px);
+  const x = (date: string, end = false) =>
+    (toDay(date) - origin + (end ? 1 : 0)) * px;
+
+  const ticks = useMemo(() => {
+    const top: { left: number; text: string }[] = [];
+    const bottom: { left: number; text: string; off?: boolean }[] = [];
+    const project = new Set(draft.weekdays);
+    const holidays = new Set(draft.holidays);
+    for (let d = origin; d <= last; d++) {
+      const iso = fromDay(d);
+      const dt = new Date(d * DAY);
+      const left = (d - origin) * px;
+      const first = dt.getUTCDate() === 1 || d === origin;
+      if (scale === "month" || px < 4) {
+        if ((dt.getUTCMonth() === 0 && dt.getUTCDate() === 1) || d === origin)
+          top.push({ left, text: String(dt.getUTCFullYear()) });
+        if (first) bottom.push({ left, text: label(iso, { month: "short" }) });
+      } else {
+        // The partial month at the left edge is labelled only if it is wide.
+        if (dt.getUTCDate() === 1 || (d === origin && dt.getUTCDate() <= 20))
+          top.push({
+            left,
+            text: label(iso, {
+              month: px >= 20 ? "long" : "short",
+              year: "numeric",
+            }),
+          });
+        const weekday = (dt.getUTCDay() + 6) % 7;
+        if (scale === "day")
+          bottom.push({
+            left,
+            text: `${WEEKDAYS[weekday][0]} ${dt.getUTCDate()}`,
+            off: !project.has(weekday) || holidays.has(iso),
+          });
+        else if (weekday === 0)
+          bottom.push({ left, text: String(dt.getUTCDate()) });
+      }
+    }
+    return { top, bottom };
+  }, [origin, last, px, scale, draft.weekdays, draft.holidays]);
+
+  const nonWorking = useMemo(() => {
+    if (px < 5) return [];
+    const out: number[] = [];
+    const project = new Set(draft.weekdays);
+    const holidays = new Set(draft.holidays);
+    for (let d = origin; d <= last; d++) {
+      const weekday = (new Date(d * DAY).getUTCDay() + 6) % 7;
+      if (!project.has(weekday) || holidays.has(fromDay(d))) out.push(d);
+    }
+    return out;
+  }, [origin, last, px, draft.weekdays, draft.holidays]);
+
+  const rowIndex = new Map<number, number>();
+  visible.forEach((r, i) => r.kind === "task" && rowIndex.set(r.id, i));
+  const arrows: { d: string; critical: boolean; key: string }[] = [];
+  for (const t of draft.tasks) {
+    const to = computed.get(t.id);
+    const yTo = rowIndex.get(t.id);
+    if (!to || yTo === undefined) continue;
+    for (const link of t.links) {
+      const from = computed.get(link.predecessor);
+      const yFrom = rowIndex.get(link.predecessor);
+      if (!from || yFrom === undefined) continue;
+      const edge = (r: Scheduled, finish: boolean) =>
+        r.milestone
+          ? x(r.start, !!r.at_day_end)
+          : finish
+            ? x(r.finish, true)
+            : x(r.start);
+      const x1 = edge(from, link.relation === "FS" || link.relation === "FF");
+      const x2 = edge(to, link.relation === "FF" || link.relation === "SF");
+      const y1 = yFrom * ROW + ROW / 2,
+        y2 = yTo * ROW + ROW / 2;
+      const toEnd = link.relation === "FF" || link.relation === "SF";
+      const d =
+        !toEnd && x2 >= x1 + 10
+          ? `M${x1} ${y1} H${x1 + 6} V${y2} H${x2 - 1}`
+          : `M${x1} ${y1} H${x1 + 6} V${y2 + (y2 > y1 ? -ROW / 2 + 4 : ROW / 2 - 4)} H${
+              toEnd ? x2 + 10 : x2 - 10
+            } V${y2} H${toEnd ? x2 + 1 : x2 - 1}`;
+      arrows.push({
+        d,
+        critical: !!(from.critical && to.critical),
+        key: `${link.predecessor}-${t.id}`,
+      });
+    }
+  }
+
+  const fitScroll = () => {
+    setScale("fit");
+    scroller.current?.scrollTo({ left: 0 });
+  };
+  const activeTask = active?.kind === "task" ? tasks.get(active.id) : undefined;
+  const activePhase =
+    active?.kind === "phase" ? phaseRows.get(active.code) : undefined;
+  const chosen = sequence.filter((id) => selected.has(id));
+  const pickList = draft.tasks
+    .filter((t) => t.name.trim())
+    .map((t) => ({ id: t.id, text: `${t.wbs} · ${t.name}` }));
+  const baselineSet = Object.keys(draft.baseline ?? {}).length > 0;
+
   return (
-    <section className="panel">
-      <div className="section-title">
-        <CalendarDays />
-        <h2>Cronograma de obra</h2>
-        <button className="primary right" onClick={create}>
-          <Plus size={16} />
-          Actividad
+    <section className="panel planner">
+      <div className="planner-top">
+        <label className="planner-start">
+          Inicio del proyecto
+          <input
+            type="date"
+            value={draft.start}
+            onChange={(e) =>
+              e.target.value && setDraft({ ...draft, start: e.target.value })
+            }
+          />
+        </label>
+        <button onClick={() => setCalendarOpen(true)}>
+          <CalendarDays size={15} /> Calendario y seguimiento
         </button>
-      </div>
-      <div className="tools">
-        <button onClick={() => setCalendar(true)}>
-          <SlidersHorizontal size={16} />
-          Calendario y seguimiento
-        </button>
-        {!!state.schedule.length && (
-          <a
-            className="btn"
-            download
-            href={"/api/projects/" + state.project.id + "/schedule.xml"}
+        <div className="planner-save">
+          {dirty && <span className="unsaved">Cambios sin guardar</span>}
+          {notice && (
+            <span className="saved" role="status">
+              {notice}
+            </span>
+          )}
+          <button
+            className="primary"
+            disabled={
+              !dirty || saving || !!problem || !!Object.keys(localErrors).length
+            }
+            onClick={save}
           >
-            <Download size={15} />
-            Microsoft Project XML
-          </a>
+            <Save size={15} /> {saving ? "Guardando…" : "Guardar cronograma"}
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="planner-toolbar"
+        role="toolbar"
+        aria-label="Edición del cronograma"
+      >
+        <button
+          onClick={() =>
+            addTasks(
+              [{ name: "", duration: 1 }],
+              active?.kind === "task"
+                ? { after: active.id }
+                : active?.kind === "phase"
+                  ? { phase: active.code }
+                  : null,
+            )
+          }
+        >
+          <Plus size={15} /> Actividad
+        </button>
+        <button
+          onClick={() =>
+            addTasks(
+              [{ name: "Entrega", duration: 0 }],
+              active?.kind === "task" ? { after: active.id } : null,
+            )
+          }
+        >
+          <Diamond size={15} /> Hito
+        </button>
+        <span className="planner-divider" />
+        <button
+          disabled={chosen.length < 2}
+          onClick={() => {
+            setDraft({ ...draft, tasks: chain(draft.tasks, chosen, sequence) });
+            setNotice(`Se encadenaron ${chosen.length} actividades en orden.`);
+          }}
+        >
+          <Link2 size={15} /> Encadenar
+        </button>
+        {phaseName === null ? (
+          <button disabled={!chosen.length} onClick={() => setPhaseName("")}>
+            <FolderPlus size={15} /> Agrupar en fase
+          </button>
+        ) : (
+          <form
+            className="phase-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!phaseName.trim()) return;
+              restructure(group(tree, chosen, phaseName.trim(), sequence));
+              setSelected(new Set());
+              setPhaseName(null);
+            }}
+          >
+            <input
+              autoFocus
+              aria-label="Nombre de la nueva fase"
+              placeholder="Ej. Cimentación"
+              value={phaseName}
+              maxLength={160}
+              onChange={(e) => setPhaseName(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setPhaseName(null)}
+            />
+            <button className="primary" disabled={!phaseName.trim()}>
+              Crear fase
+            </button>
+            <button
+              type="button"
+              aria-label="Cancelar"
+              onClick={() => setPhaseName(null)}
+            >
+              <X size={14} />
+            </button>
+          </form>
+        )}
+        <button disabled={!chosen.length} onClick={() => removeTasks(chosen)}>
+          <Trash2 size={15} /> Eliminar
+        </button>
+        {!!chosen.length && (
+          <span className="planner-count">
+            {chosen.length}{" "}
+            {chosen.length === 1 ? "seleccionada" : "seleccionadas"}
+          </span>
+        )}
+        <span className="planner-divider" />
+        <label className="planner-scale">
+          Escala
+          <select
+            value={scale}
+            onChange={(e) => setScale(e.target.value as Scale)}
+          >
+            <option value="day">Días</option>
+            <option value="week">Semanas</option>
+            <option value="month">Meses</option>
+            <option value="fit">Todo el cronograma</option>
+          </select>
+        </label>
+        <button onClick={fitScroll} title="Ajustar al cronograma completo">
+          <Maximize2 size={15} /> Ajustar
+        </button>
+        <button
+          onClick={() => setBaseline(false)}
+          disabled={!timeline.schedule.length}
+        >
+          <Flag size={15} />{" "}
+          {baselineSet ? "Actualizar línea base" : "Fijar línea base"}
+        </button>
+        {baselineSet && (
+          <button onClick={() => setBaseline(true)}>Quitar línea base</button>
+        )}
+        <a
+          className={"btn" + (dirty ? " disabled" : "")}
+          aria-disabled={dirty}
+          title={dirty ? "Guarda el cronograma antes de exportarlo" : undefined}
+          href={dirty ? undefined : `/api/projects/${pid}/schedule.xml`}
+          download
+        >
+          <Download size={15} /> Exportar XML
+        </a>
+      </div>
+
+      {problem && (
+        <div className="error planner-problem" role="alert">
+          {problem.message}
+          {problem.info?.task && (
+            <button
+              onClick={() => {
+                setActive({ kind: "task", id: problem.info!.task! });
+                document
+                  .getElementById(`cell-${problem.info!.task}-name`)
+                  ?.focus();
+              }}
+            >
+              Ir a la actividad
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className={"planner-body" + (active ? " with-details" : "")}>
+        <div
+          className="planner-scroll"
+          ref={scroller}
+          onPaste={onPaste}
+          style={{ ["--table-w" as string]: tableWidth + "px" }}
+        >
+          <div
+            className="planner-canvas"
+            style={{ width: tableWidth + timelineWidth }}
+          >
+            <div className="planner-row planner-head" style={{ height: HEAD }}>
+              <div className="planner-cells">
+                <span />
+                <span>EDT</span>
+                <span>Actividad</span>
+                <span title="Duración en días laborables">Días</span>
+                <span>Inicio</span>
+                <span>Fin</span>
+                <span>Predecesoras</span>
+              </div>
+              <div className="planner-axis" style={{ width: timelineWidth }}>
+                {ticks.top.map((t) => (
+                  <span
+                    key={"t" + t.left}
+                    className="axis-top"
+                    style={{ left: t.left }}
+                  >
+                    {t.text}
+                  </span>
+                ))}
+                {ticks.bottom.map((t) => (
+                  <span
+                    key={"b" + t.left}
+                    className={"axis-bottom" + (t.off ? " off" : "")}
+                    style={{
+                      left: t.left,
+                      width: scale === "day" ? px : undefined,
+                    }}
+                  >
+                    {t.text}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div
+              className="planner-rows"
+              style={{ height: Math.max(1, visible.length) * ROW }}
+            >
+              <div
+                className="planner-shade"
+                style={{ left: tableWidth, width: timelineWidth }}
+                aria-hidden="true"
+              >
+                {nonWorking.map((d) => (
+                  <i key={d} style={{ left: (d - origin) * px, width: px }} />
+                ))}
+                {draft.status_date && (
+                  <b
+                    className="status-marker"
+                    style={{ left: x(draft.status_date, true) }}
+                    title={`Fecha de seguimiento: ${longDate(draft.status_date)}`}
+                  />
+                )}
+              </div>
+              <svg
+                className="planner-links"
+                style={{ left: tableWidth }}
+                width={timelineWidth}
+                height={Math.max(1, visible.length) * ROW}
+                aria-hidden="true"
+              >
+                <defs>
+                  <marker
+                    id="arrow"
+                    viewBox="0 0 8 8"
+                    refX="7"
+                    refY="4"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto"
+                  >
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--link-color)" />
+                  </marker>
+                  <marker
+                    id="arrow-critical"
+                    viewBox="0 0 8 8"
+                    refX="7"
+                    refY="4"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto"
+                  >
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--critical)" />
+                  </marker>
+                </defs>
+                {arrows.map((a) => (
+                  <path
+                    key={a.key}
+                    d={a.d}
+                    className={a.critical ? "critical" : ""}
+                    markerEnd={`url(#${a.critical ? "arrow-critical" : "arrow"})`}
+                  />
+                ))}
+              </svg>
+
+              {visible.map((r) => {
+                if (r.kind === "phase") {
+                  const p = phaseRows.get(r.code);
+                  const isActive =
+                    active?.kind === "phase" && active.code === r.code;
+                  return (
+                    <div
+                      key={"p" + r.code}
+                      className={
+                        "planner-row phase" + (isActive ? " active" : "")
+                      }
+                    >
+                      <div className="planner-cells">
+                        <span />
+                        <span className="wbs">{r.code}</span>
+                        <span
+                          className="name"
+                          style={{ paddingLeft: r.depth * 14 }}
+                        >
+                          <button
+                            className="fold"
+                            aria-expanded={!folded.has(r.code)}
+                            aria-label={
+                              (folded.has(r.code) ? "Mostrar " : "Plegar ") +
+                              r.name
+                            }
+                            onClick={() => {
+                              const next = new Set(folded);
+                              if (next.has(r.code)) next.delete(r.code);
+                              else next.add(r.code);
+                              setFolded(next);
+                            }}
+                          >
+                            {folded.has(r.code) ? (
+                              <ChevronRight size={14} />
+                            ) : (
+                              <ChevronDown size={14} />
+                            )}
+                          </button>
+                          <input
+                            className="cell"
+                            aria-label={`Nombre de la fase ${r.code}`}
+                            value={r.name}
+                            maxLength={160}
+                            onFocus={() =>
+                              setActive({ kind: "phase", code: r.code })
+                            }
+                            onChange={(e) =>
+                              restructure(
+                                renamePhase(
+                                  tree,
+                                  r.code,
+                                  e.target.value || " ",
+                                ),
+                              )
+                            }
+                          />
+                        </span>
+                        <span
+                          className="num"
+                          title={
+                            p ? days(p.duration) + " laborables" : undefined
+                          }
+                        >
+                          {p ? p.duration : "—"}
+                        </span>
+                        <span title={p ? longDate(p.start) : undefined}>
+                          {p ? cellDate(p.start) : ""}
+                        </span>
+                        <span title={p ? longDate(p.finish) : undefined}>
+                          {p ? cellDate(p.finish) : ""}
+                        </span>
+                        <span className="muted">
+                          {r.size} {r.size === 1 ? "actividad" : "actividades"}
+                        </span>
+                      </div>
+                      <div
+                        className="planner-track"
+                        style={{ width: timelineWidth }}
+                      >
+                        {p && (
+                          <button
+                            className={
+                              "bar phase-bar" + (p.critical ? " critical" : "")
+                            }
+                            style={{
+                              left: x(p.start),
+                              width: Math.max(
+                                4,
+                                x(p.finish, true) - x(p.start),
+                              ),
+                            }}
+                            onClick={() =>
+                              setActive({ kind: "phase", code: r.code })
+                            }
+                            aria-label={`Fase ${r.name}: ${shortDate(p.start)} a ${shortDate(p.finish)}`}
+                          >
+                            <i style={{ width: `${p.progress}%` }} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+                const t = tasks.get(r.id)!;
+                const c = computed.get(r.id);
+                const isActive = active?.kind === "task" && active.id === r.id;
+                const rowError = cellError(r.id, "row");
+                const milestone = t.duration === 0 && !t.quantity;
+                return (
+                  <div
+                    key={r.id}
+                    className={
+                      "planner-row" +
+                      (isActive ? " active" : "") +
+                      (selected.has(r.id) ? " selected" : "") +
+                      (c?.critical ? " is-critical" : "") +
+                      (rowError ? " has-error" : "")
+                    }
+                  >
+                    <div
+                      className="planner-cells"
+                      onFocus={() => setActive({ kind: "task", id: r.id })}
+                    >
+                      <span>
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${t.name || "actividad nueva"}`}
+                          checked={selected.has(r.id)}
+                          onClick={(e) => toggleSelect(r.id, e.shiftKey)}
+                          readOnly
+                        />
+                      </span>
+                      <span className="wbs">{t.wbs}</span>
+                      <span
+                        className="name"
+                        style={{ paddingLeft: r.depth * 14 }}
+                      >
+                        {milestone && (
+                          <Diamond
+                            size={11}
+                            className="milestone-icon"
+                            aria-label="Hito"
+                          />
+                        )}
+                        <input
+                          id={`cell-${r.id}-name`}
+                          className="cell"
+                          data-task={r.id}
+                          data-field="name"
+                          aria-label={`Nombre de la actividad ${t.wbs}`}
+                          aria-invalid={!!cellError(r.id, "name") || undefined}
+                          title={cellError(r.id, "name") || undefined}
+                          placeholder="Nombre de la actividad"
+                          value={t.name}
+                          maxLength={160}
+                          onChange={(e) =>
+                            patchTask(r.id, { name: e.target.value })
+                          }
+                          onKeyDown={(e) => onCellKey(e, r.id)}
+                        />
+                      </span>
+                      <span className="num">
+                        <input
+                          id={`cell-${r.id}-duration`}
+                          className="cell"
+                          data-task={r.id}
+                          data-field="duration"
+                          inputMode="numeric"
+                          aria-label={`Duración en días laborables de ${t.name || "la actividad"}`}
+                          aria-invalid={
+                            !!cellError(r.id, "duration") || undefined
+                          }
+                          title={
+                            cellError(r.id, "duration") ||
+                            (t.quantity
+                              ? "Calculada con las cantidades vinculadas"
+                              : undefined)
+                          }
+                          readOnly={!!t.quantity}
+                          value={
+                            durations[r.id] ??
+                            String(
+                              t.quantity
+                                ? (c?.duration ?? t.duration)
+                                : t.duration,
+                            )
+                          }
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (
+                              /^\d{1,4}$/.test(raw.trim()) &&
+                              Number(raw) <= 3650
+                            ) {
+                              const { [r.id]: _, ...rest } = durations;
+                              setDurations(rest);
+                              patchTask(r.id, { duration: Number(raw) });
+                            } else setDurations({ ...durations, [r.id]: raw });
+                          }}
+                          onKeyDown={(e) => onCellKey(e, r.id)}
+                        />
+                      </span>
+                      <span
+                        className="date"
+                        title={c ? longDate(c.start) : undefined}
+                      >
+                        {c ? cellDate(c.start) : "—"}
+                      </span>
+                      <span
+                        className="date"
+                        title={c ? longDate(c.finish) : undefined}
+                      >
+                        {c && !c.milestone
+                          ? cellDate(c.finish)
+                          : c
+                            ? "Hito"
+                            : "—"}
+                      </span>
+                      <span className="preds">
+                        {t.links.map((l) => (
+                          <span
+                            key={l.predecessor}
+                            className="pred-chip"
+                            title={`${RELATIONS[l.relation].sentence} «${names.get(l.predecessor)}»`}
+                          >
+                            <b>{RELATIONS[l.relation].short}</b>
+                            <span className="pred-text">
+                              <small>
+                                {RELATIONS[l.relation].sentence}
+                                {l.lag
+                                  ? ` (${l.lag > 0 ? "+" : ""}${l.lag} d)`
+                                  : ""}
+                              </small>
+                              <strong>{names.get(l.predecessor)}</strong>
+                            </span>
+                            <button
+                              aria-label={`Quitar predecesora ${names.get(l.predecessor)}`}
+                              onClick={() =>
+                                patchTask(r.id, {
+                                  links: t.links.filter(
+                                    (x) => x.predecessor !== l.predecessor,
+                                  ),
+                                })
+                              }
+                            >
+                              <X size={11} />
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          id={`cell-${r.id}-links`}
+                          className="cell pred-search"
+                          list="planner-tasks"
+                          data-task={r.id}
+                          data-field="links"
+                          aria-label={`Buscar predecesora de ${t.name || "la actividad"}`}
+                          aria-invalid={!!cellError(r.id, "links") || undefined}
+                          title={cellError(r.id, "links") || undefined}
+                          placeholder={
+                            t.links.length ? "+" : "Buscar predecesora…"
+                          }
+                          onChange={(e) => {
+                            const match = pickList.find(
+                              (o) => o.text === e.target.value && o.id !== r.id,
+                            );
+                            if (match) {
+                              addLink(r.id, match.id);
+                              e.target.value = "";
+                            }
+                          }}
+                        />
+                      </span>
+                    </div>
+                    <div
+                      className="planner-track"
+                      style={{ width: timelineWidth }}
+                    >
+                      {c?.baseline && (
+                        <i
+                          className="baseline-bar"
+                          style={{
+                            left: x(c.baseline.start),
+                            width: Math.max(
+                              3,
+                              x(c.baseline.finish, true) - x(c.baseline.start),
+                            ),
+                          }}
+                          title={`Línea base: ${shortDate(c.baseline.start)} a ${shortDate(c.baseline.finish)}`}
+                        />
+                      )}
+                      {c &&
+                        (c.milestone ? (
+                          <button
+                            className={
+                              "milestone" + (c.critical ? " critical" : "")
+                            }
+                            style={{ left: x(c.start, !!c.at_day_end) - 8 }}
+                            onClick={() =>
+                              setActive({ kind: "task", id: r.id })
+                            }
+                            aria-label={`Hito ${t.name}: ${shortDate(c.start)}`}
+                          />
+                        ) : (
+                          <button
+                            className={"bar" + (c.critical ? " critical" : "")}
+                            style={{
+                              left: x(c.start),
+                              width: Math.max(
+                                3,
+                                x(c.finish, true) - x(c.start),
+                              ),
+                            }}
+                            onClick={() =>
+                              setActive({ kind: "task", id: r.id })
+                            }
+                            aria-label={`${t.name}: ${shortDate(c.start)} a ${shortDate(c.finish)}`}
+                          >
+                            <i style={{ width: `${t.progress}%` }} />
+                          </button>
+                        ))}
+                    </div>
+                    {rowError && (
+                      <p className="row-error" style={{ left: 8 }}>
+                        {rowError}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+              {!draft.tasks.length && (
+                <div className="planner-row">
+                  <div className="planner-cells">
+                    <span />
+                    <span className="wbs">1</span>
+                    <span className="name">
+                      <input
+                        className="cell"
+                        aria-label="Primera actividad"
+                        placeholder="Escribe una actividad o pega filas desde Excel"
+                        onChange={(e) => {
+                          const [created] = addTasks(
+                            [{ name: e.target.value, duration: 1 }],
+                            null,
+                          );
+                          focusNext.current = { id: created.id, field: "name" };
+                        }}
+                      />
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <datalist id="planner-tasks">
+            {pickList.map((o) => (
+              <option key={o.id} value={o.text} />
+            ))}
+          </datalist>
+        </div>
+
+        {active && (
+          <div
+            className="planner-details"
+            role="region"
+            aria-label="Detalles de la selección"
+          >
+            <button
+              className="close"
+              aria-label="Cerrar detalles"
+              onClick={() => setActive(null)}
+            >
+              <X size={16} />
+            </button>
+            {activeTask ? (
+              <TaskDetails
+                key={activeTask.id}
+                task={activeTask}
+                row={computed.get(activeTask.id)}
+                plan={draft}
+                state={state}
+                names={names}
+                pickList={pickList}
+                problem={cellError(activeTask.id, "row")}
+                patch={(change) => patchTask(activeTask.id, change)}
+                addLink={(from) => addLink(activeTask.id, from)}
+                onMove={(step) => restructure(move(tree, activeTask.id, step))}
+                onDelete={() => removeTasks([activeTask.id])}
+              />
+            ) : activePhase || active.kind === "phase" ? (
+              <PhaseDetails
+                phase={activePhase}
+                code={active.kind === "phase" ? active.code : ""}
+                name={
+                  draft.groups[active.kind === "phase" ? active.code : ""] ?? ""
+                }
+                onUngroup={() => {
+                  restructure(ungroup(tree, (active as { code: string }).code));
+                  setActive(null);
+                }}
+              />
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      <div className="schedule-legend planner-legend">
+        <span>
+          <i className="key-bar" /> Actividad
+        </span>
+        <span>
+          <i className="key-critical" /> Ruta crítica
+        </span>
+        <span>
+          <i className="key-progress" /> Avance real
+        </span>
+        <span>
+          <i className="key-phase" /> Fase
+        </span>
+        <span>
+          <i className="key-milestone" /> Hito
+        </span>
+        {baselineSet && (
+          <span>
+            <i className="key-baseline" /> Línea base
+          </span>
+        )}
+        {draft.status_date && (
+          <span>
+            <i className="key-status" /> Fecha de seguimiento
+          </span>
         )}
       </div>
       <p className="field-help">
-        Programación automática · Duraciones en días laborables · Seguimiento al{" "}
-        {dateLabel(cutoff)}
-        {!state.plan.status_date && " (hoy)"}
+        Escribe el nombre y la duración, pulsa Enter para otra fila y Tab para
+        pasar de celda. Puedes pegar varias filas copiadas de Excel (nombre y
+        duración). Selecciona actividades para encadenarlas o agruparlas en una
+        fase. Las fechas se calculan con el inicio y el calendario del proyecto.
       </p>
-      {!state.schedule.length ? (
-        <Empty title="Programa la primera actividad">
-          Define su duración o vincúlala a una cantidad de obra y a un
-          rendimiento diario.
-        </Empty>
-      ) : (
-        <>
-          <div className="tools subsection schedule-toolbar">
-            <label>
-              Buscar actividad
-              <input
-                type="search"
-                placeholder="Nombre o código EDT"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={critical}
-                onChange={(e) => setCritical(e.target.checked)}
-              />
-              Solo ruta crítica
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={columns}
-                onChange={(e) => setColumns(e.target.checked)}
-              />
-              Más columnas
-            </label>
-            <label className="check">
-              Escala
-              <input
-                type="range"
-                min="100"
-                max="350"
-                value={zoom}
-                onChange={(e) => setZoom(+e.target.value)}
-              />
-            </label>
-          </div>
-          <div
-            className="schedule-scroll"
-            role="region"
-            aria-label="Tabla de actividades y diagrama de Gantt"
-            tabIndex={0}
-          >
-            <table className="schedule-table">
-              <thead>
-                <tr>
-                  <th>EDT</th>
-                  <th>Nombre de la actividad</th>
-                  <th>Duración</th>
-                  <th>Comienzo</th>
-                  <th>Fin</th>
-                  <th>Predecesoras</th>
-                  <th>% completado</th>
-                  {columns && (
-                    <>
-                      <th>% previsto</th>
-                      <th>Holgura</th>
-                      <th>Vínculo BIM</th>
-                    </>
-                  )}
-                  <th className="timeline-cell">
-                    <div className="axis" style={{ width: (340 * zoom) / 100 }}>
-                      {Number.isFinite(span) &&
-                        Array.from({ length: Math.min(5, span) }, (_, i) => (
-                          <span key={i}>
-                            {axisDate(
-                              new Date(
-                                (start +
-                                  Math.round(
-                                    ((span - 1) * i) /
-                                      Math.max(1, Math.min(5, span) - 1),
-                                  )) *
-                                  86400000,
-                              ).toISOString(),
-                            )}
-                          </span>
-                        ))}
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((t, index) => (
-                  <Fragment key={t.id}>
-                    {t.wbs
-                      .split(".")
-                      .slice(0, -1)
-                      .map((_, i) => {
-                        const code = t.wbs
-                          .split(".")
-                          .slice(0, i + 1)
-                          .join(".");
-                        const previous = rows[index - 1]?.wbs
-                          .split(".")
-                          .slice(0, i + 1)
-                          .join(".");
-                        return (
-                          previous !== code && (
-                            <tr className="schedule-group" key={code}>
-                              <td>{code}</td>
-                              <td colSpan={columns ? 10 : 7}>
-                                {code} ·{" "}
-                                {state.plan.groups[code] ?? "Grupo " + code}
-                              </td>
-                            </tr>
-                          )
-                        );
-                      })}
-                    <tr>
-                      <td>{t.wbs}</td>
-                      <td>
-                        <button
-                          className="task-name"
-                          onClick={() =>
-                            setEdit(
-                              state.plan.tasks.find((a) => a.id === t.id)!,
-                            )
-                          }
-                        >
-                          {t.name}
-                        </button>
-                        <small
-                          className={
-                            t.progress < t.planned ? "schedule-behind" : ""
-                          }
-                        >
-                          {t.progress === 100
-                            ? "Completada"
-                            : t.progress < t.planned
-                              ? "Por debajo de lo previsto"
-                              : t.progress === 0
-                                ? "Sin iniciar"
-                                : "En curso"}
-                          {t.critical ? " · Crítica" : ""}
-                        </small>
-                      </td>
-                      <td>{t.duration} d</td>
-                      <td>{compactDate(t.start)}</td>
-                      <td>{compactDate(t.finish)}</td>
-                      <td
-                        title={t.links
-                          .map(
-                            (l) =>
-                              `${state.plan.tasks.find((a) => a.id === l.predecessor)?.name}: ${relations[l.relation].label}, desfase ${l.lag} d`,
-                          )
-                          .join("; ")}
-                      >
-                        {t.links
-                          .map(
-                            (l) =>
-                              `${state.plan.tasks.find((a) => a.id === l.predecessor)?.wbs} ${relations[l.relation].short}${l.lag ? (l.lag > 0 ? "+" : "") + l.lag + "d" : ""}`,
-                          )
-                          .join("; ") || "—"}
-                      </td>
-                      <td>
-                        <strong>{fmt(t.progress)} %</strong>
-                        <progress
-                          max={100}
-                          value={t.progress}
-                          aria-label={"Porcentaje completado de " + t.name}
-                        />
-                        {!columns && (
-                          <small>Previsto: {fmt(t.planned)} %</small>
-                        )}
-                      </td>
-                      {columns && (
-                        <>
-                          <td>{fmt(t.planned)} %</td>
-                          <td>{t.slack} d</td>
-                          <td>
-                            {t.quantity
-                              ? fmt(t.amount ?? 0) +
-                                " " +
-                                unitLabel(t.quantity.unit)
-                              : "—"}
-                          </td>
-                        </>
-                      )}
-                      <td className="timeline-cell">
-                        <div
-                          className="track"
-                          style={{ width: (340 * zoom) / 100 }}
-                        >
-                          {cutoffPosition >= 0 && cutoffPosition <= 100 && (
-                            <span
-                              className="status-line"
-                              style={{ left: cutoffPosition + "%" }}
-                              title={"Fecha de seguimiento: " + cutoff}
-                            />
-                          )}
-                          <button
-                            className={"bar " + (t.critical ? "critical" : "")}
-                            style={{
-                              left: ((day(t.start) - start) / span) * 100 + "%",
-                              width:
-                                ((day(t.finish) - day(t.start) + 1) / span) *
-                                  100 +
-                                "%",
-                            }}
-                            onClick={() =>
-                              setEdit(
-                                state.plan.tasks.find((a) => a.id === t.id)!,
-                              )
-                            }
-                            title={`${t.name} · ${dateLabel(t.start)} → ${dateLabel(t.finish)} · ${t.duration} días laborables · ${t.progress}% completado · Holgura ${t.slack} d`}
-                            aria-label={"Editar " + t.name}
-                          >
-                            <i style={{ width: t.progress + "%" }} />
-                            <span>{fmt(t.progress)}%</span>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!rows.length && (
-            <p className="field-help">
-              No hay actividades que coincidan con los filtros.
-            </p>
-          )}
-          <div className="schedule-legend">
-            <span>
-              <i className="key-critical" /> Ruta crítica
-            </span>
-            <span>
-              <i className="key-progress" /> Porción completada
-            </span>
-            <span>
-              <i className="key-status" /> Fecha de seguimiento
-            </span>
-          </div>
-          <p className="field-help">
-            Selecciona el nombre o la barra para editar. La holgura indica
-            cuántos días laborables puede desplazarse una actividad sin retrasar
-            el fin del proyecto o una fecha obligatoria.
-          </p>
-          <details className="schedule-help">
-            <summary>Cómo leer el seguimiento y las dependencias</summary>
-            <p>
-              <strong>% completado:</strong> progreso que registras según la
-              ejecución. <strong>% previsto:</strong> progreso lineal esperado
-              al cierre de la fecha de seguimiento, según el calendario vigente.
-              Esta comparación no es una línea base guardada.
-            </p>
-            <p>
-              <strong>FC:</strong> fin a comienzo. <strong>CC:</strong> comienzo
-              a comienzo. <strong>FF:</strong> fin a fin. <strong>CF:</strong>{" "}
-              comienzo a fin. Ejemplo: 1.1 FC+2d espera dos días laborables
-              después de terminar la actividad 1.1.
-            </p>
-          </details>
-        </>
-      )}
-      {calendar && (
-        <Calendar
-          plan={state.plan}
-          save={save}
-          close={() => setCalendar(false)}
-        />
-      )}
-      {edit && (
-        <Editor
-          initial={edit}
-          state={state}
-          close={() => setEdit(null)}
-          save={async (t, groups) => {
-            const tasks = state.plan.tasks;
-            await save({
-              ...state.plan,
-              groups: Object.fromEntries(
-                Object.entries(groups).filter(([, name]) => name.trim()),
-              ),
-              tasks: tasks.some((a) => a.id === t.id)
-                ? tasks.map((a) => (a.id === t.id ? t : a))
-                : [...tasks, t],
-            });
+
+      {calendarOpen && (
+        <CalendarDialog
+          plan={draft}
+          close={() => setCalendarOpen(false)}
+          apply={(change) => {
+            setDraft({ ...draft, ...change });
+            setCalendarOpen(false);
           }}
         />
       )}
     </section>
+  );
+}
+
+function TaskDetails({
+  task,
+  row,
+  plan,
+  state,
+  names,
+  pickList,
+  problem,
+  patch,
+  addLink,
+  onMove,
+  onDelete,
+}: {
+  task: Task;
+  row?: Scheduled;
+  plan: Plan;
+  state: State;
+  names: Map<number, string>;
+  pickList: { id: number; text: string }[];
+  problem: string;
+  patch: (change: Partial<Task>) => void;
+  addLink: (from: number) => void;
+  onMove: (step: -1 | 1) => void;
+  onDelete: () => void;
+}) {
+  const sources = state.tables.filter(
+    (s) => state.results[s.id]?.detail.length,
+  );
+  return (
+    <div className="details-body">
+      <span className="eyebrow">
+        {task.duration === 0 && !task.quantity ? "Hito" : "Actividad"}{" "}
+        {task.wbs}
+      </span>
+      <h3>{task.name || "Actividad nueva"}</h3>
+      {problem && (
+        <p className="error" role="alert">
+          {problem}
+        </p>
+      )}
+      {row && (
+        <dl className="details-dates">
+          <div>
+            <dt>Inicio</dt>
+            <dd>{longDate(row.start)}</dd>
+          </div>
+          <div>
+            <dt>Fin</dt>
+            <dd>
+              {row.milestone ? "Hito (sin duración)" : longDate(row.finish)}
+            </dd>
+          </div>
+          <div>
+            <dt>Duración</dt>
+            <dd>{days(row.duration)} laborables</dd>
+          </div>
+          <div>
+            <dt>Holgura</dt>
+            <dd>
+              {days(row.slack)}
+              {row.critical && (
+                <strong className="critical-tag"> · Ruta crítica</strong>
+              )}
+            </dd>
+          </div>
+          {row.baseline && (
+            <div>
+              <dt>Línea base</dt>
+              <dd>
+                {shortDate(row.baseline.start)} –{" "}
+                {shortDate(row.baseline.finish)}
+                {row.baseline.finish_variance
+                  ? ` · ${row.baseline.finish_variance > 0 ? "atraso" : "adelanto"} de ${days(
+                      Math.abs(row.baseline.finish_variance),
+                    )}`
+                  : " · sin variación"}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {row && (
+        <div className="details-why">
+          <h4>Por qué estas fechas</h4>
+          {explain(row, names, plan).map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      )}
+
+      <h4>Predecesoras</h4>
+      {task.links.length === 0 && <p className="muted">Sin predecesoras.</p>}
+      {task.links.map((l, i) => (
+        <div key={l.predecessor} className="details-link">
+          <strong>{names.get(l.predecessor)}</strong>
+          <label>
+            Relación
+            <select
+              value={l.relation}
+              onChange={(e) =>
+                patch({
+                  links: task.links.map((x, j) =>
+                    j === i ? { ...x, relation: e.target.value } : x,
+                  ),
+                })
+              }
+            >
+              {Object.entries(RELATIONS).map(([code, r]) => (
+                <option key={code} value={code}>
+                  {r.short} · {r.sentence}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Desfase (días laborables)
+            <input
+              type="number"
+              step="1"
+              min="-3650"
+              max="3650"
+              value={l.lag}
+              onChange={(e) =>
+                patch({
+                  links: task.links.map((x, j) =>
+                    j === i
+                      ? { ...x, lag: Math.trunc(Number(e.target.value) || 0) }
+                      : x,
+                  ),
+                })
+              }
+            />
+          </label>
+          <small>
+            Positivo espera días; negativo adelanta (solapa) la actividad.
+          </small>
+          <button
+            onClick={() =>
+              patch({ links: task.links.filter((_, j) => j !== i) })
+            }
+          >
+            <X size={13} /> Quitar
+          </button>
+        </div>
+      ))}
+      <label>
+        Añadir predecesora
+        <input
+          list="planner-tasks"
+          placeholder="Busca por nombre"
+          onChange={(e) => {
+            const match = pickList.find(
+              (o) => o.text === e.target.value && o.id !== task.id,
+            );
+            if (match) {
+              addLink(match.id);
+              e.target.value = "";
+            }
+          }}
+        />
+      </label>
+
+      <h4>Avance y calendario</h4>
+      <label>
+        % completado
+        <input
+          type="number"
+          min="0"
+          max="100"
+          step="5"
+          value={task.progress}
+          onChange={(e) =>
+            patch({
+              progress: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+            })
+          }
+        />
+      </label>
+      {row && (
+        <p className="muted">
+          Previsto a la fecha de seguimiento: {fmt(row.planned)} %.
+        </p>
+      )}
+      <label>
+        Calendario
+        <select
+          value={task.calendar ?? ""}
+          onChange={(e) => patch({ calendar: e.target.value })}
+        >
+          <option value="">Calendario del proyecto</option>
+          {Object.keys(plan.calendars ?? {}).map((name) => (
+            <option key={name}>{name}</option>
+          ))}
+        </select>
+      </label>
+
+      <h4>Restricciones</h4>
+      <label>
+        No comenzar antes del
+        <input
+          type="date"
+          value={task.earliest ?? ""}
+          onChange={(e) => patch({ earliest: e.target.value || null })}
+        />
+      </label>
+      <label>
+        Debe finalizar el
+        <input
+          type="date"
+          value={task.fixed_finish ?? ""}
+          onChange={(e) => patch({ fixed_finish: e.target.value || null })}
+        />
+      </label>
+
+      <h4>Duración desde cantidades</h4>
+      <label>
+        Origen de la duración
+        <select
+          value={task.quantity?.table ?? ""}
+          onChange={(e) =>
+            patch({
+              quantity: e.target.value
+                ? {
+                    table: +e.target.value,
+                    unit: availableMeasures(
+                      state.results[+e.target.value].detail,
+                    )[0].unit,
+                    rate: 1,
+                    level: "",
+                    category: "",
+                  }
+                : null,
+            })
+          }
+        >
+          <option value="">Duración manual</option>
+          {sources.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} · {s.mapping?.category}
+            </option>
+          ))}
+        </select>
+      </label>
+      {task.quantity && state.results[task.quantity.table] && (
+        <>
+          <label>
+            Nivel
+            <select
+              value={task.quantity.level}
+              onChange={(e) =>
+                patch({
+                  quantity: { ...task.quantity!, level: e.target.value },
+                })
+              }
+            >
+              <option value="">Todos los niveles</option>
+              {[
+                ...new Set(
+                  state.results[task.quantity.table].detail.map((r) =>
+                    String(r.Nivel),
+                  ),
+                ),
+              ].map((n) => (
+                <option key={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Categoría
+            <select
+              value={task.quantity.category ?? ""}
+              onChange={(e) =>
+                patch({
+                  quantity: { ...task.quantity!, category: e.target.value },
+                })
+              }
+            >
+              <option value="">Todas las categorías</option>
+              {[
+                ...new Set(
+                  state.results[task.quantity.table].detail.map((r) =>
+                    String(r.Categoría),
+                  ),
+                ),
+              ].map((k) => (
+                <option key={k}>{k}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Magnitud
+            <select
+              value={task.quantity.unit}
+              onChange={(e) =>
+                patch({ quantity: { ...task.quantity!, unit: e.target.value } })
+              }
+            >
+              {availableMeasures(state.results[task.quantity.table].detail).map(
+                (m) => (
+                  <option key={m.unit} value={m.unit}>
+                    {m.label} ({unitLabel(m.unit)})
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+          <label>
+            Rendimiento ({unitLabel(task.quantity.unit)}/día)
+            <input
+              type="number"
+              min="0.000000001"
+              step="any"
+              value={task.quantity.rate || ""}
+              onChange={(e) =>
+                patch({
+                  quantity: {
+                    ...task.quantity!,
+                    rate: Number(e.target.value) || 0,
+                  },
+                })
+              }
+            />
+          </label>
+          {row?.amount != null && (
+            <p className="notice">
+              {fmt(row.amount)} {unitLabel(task.quantity.unit)} ÷{" "}
+              {fmt(task.quantity.rate)} ={" "}
+              <strong>{days(row.duration)} laborables</strong>
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="details-actions">
+        <button onClick={() => onMove(-1)}>Subir</button>
+        <button onClick={() => onMove(1)}>Bajar</button>
+        <button onClick={onDelete}>
+          <Trash2 size={14} /> Eliminar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PhaseDetails({
+  phase,
+  code,
+  name,
+  onUngroup,
+}: {
+  phase?: Phase;
+  code: string;
+  name: string;
+  onUngroup: () => void;
+}) {
+  return (
+    <div className="details-body">
+      <span className="eyebrow">Fase {code}</span>
+      <h3>{name}</h3>
+      {phase ? (
+        <dl className="details-dates">
+          <div>
+            <dt>Inicio</dt>
+            <dd>{longDate(phase.start)}</dd>
+          </div>
+          <div>
+            <dt>Fin</dt>
+            <dd>{longDate(phase.finish)}</dd>
+          </div>
+          <div>
+            <dt>Duración</dt>
+            <dd>{days(phase.duration)} laborables del proyecto</dd>
+          </div>
+          <div>
+            <dt>Avance</dt>
+            <dd>
+              {fmt(phase.progress)} % real · {fmt(phase.planned)} % previsto
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="muted">
+          Añade actividades a esta fase para ver sus fechas.
+        </p>
+      )}
+      <p className="muted">
+        Las fechas de la fase van del primer inicio al último fin de sus
+        actividades; el avance se pondera por duración.
+      </p>
+      <div className="details-actions">
+        <button onClick={onUngroup}>Desagrupar fase</button>
+      </div>
+    </div>
+  );
+}
+
+function CalendarDialog({
+  plan,
+  apply,
+  close,
+}: {
+  plan: Plan;
+  apply: (change: Partial<Plan>) => void;
+  close: () => void;
+}) {
+  const [weekdays, setWeekdays] = useState(plan.weekdays),
+    [holidays, setHolidays] = useState(plan.holidays),
+    [statusDate, setStatusDate] = useState(plan.status_date ?? ""),
+    [holiday, setHoliday] = useState(""),
+    [calendars, setCalendars] = useState<Record<string, WorkCalendar>>(
+      plan.calendars ?? {},
+    ),
+    [newName, setNewName] = useState("");
+  const toggle = (list: number[], d: number) =>
+    list.includes(d) ? list.filter((x) => x !== d) : [...list, d].sort();
+  return (
+    <Modal
+      title="Calendario y seguimiento"
+      close={close}
+      className="calendar-dialog"
+    >
+      <form
+        className="calendar-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          apply({
+            weekdays,
+            holidays,
+            status_date: statusDate || null,
+            calendars,
+          });
+        }}
+      >
+        <label>
+          Fecha de seguimiento (opcional)
+          <input
+            type="date"
+            value={statusDate}
+            onChange={(e) => setStatusDate(e.target.value)}
+          />
+        </label>
+        <p className="field-help">
+          Corte para comparar el avance previsto con el real. Vacía usa hoy.
+        </p>
+        <h3>Días de trabajo del proyecto</h3>
+        <div className="weekdays">
+          {WEEKDAYS.map((d, i) => (
+            <label className="check" key={d}>
+              <input
+                type="checkbox"
+                checked={weekdays.includes(i)}
+                disabled={weekdays.length === 1 && weekdays.includes(i)}
+                onChange={() => setWeekdays(toggle(weekdays, i))}
+              />
+              {d}
+            </label>
+          ))}
+        </div>
+        <h3>Festivos</h3>
+        <div className="holiday-entry">
+          <input
+            type="date"
+            aria-label="Nuevo festivo"
+            value={holiday}
+            onChange={(e) => setHoliday(e.target.value)}
+          />
+          <button
+            type="button"
+            disabled={!holiday || holidays.includes(holiday)}
+            onClick={() => {
+              setHolidays([...holidays, holiday].sort());
+              setHoliday("");
+            }}
+          >
+            <Plus size={14} /> Añadir festivo
+          </button>
+        </div>
+        <div className="chips">
+          {holidays.map((h) => (
+            <button
+              type="button"
+              key={h}
+              aria-label={`Quitar festivo ${h}`}
+              onClick={() => setHolidays(holidays.filter((x) => x !== h))}
+            >
+              {shortDate(h)} <X size={12} />
+            </button>
+          ))}
+        </div>
+        <h3>Calendarios para actividades</h3>
+        <p className="field-help">
+          Por ejemplo, «Curado continuo» de lunes a domingo. Se asigna en el
+          detalle de cada actividad.
+        </p>
+        {Object.entries(calendars).map(([name, c]) => (
+          <div key={name} className="calendar-extra">
+            <strong>{name}</strong>
+            <div className="weekdays">
+              {WEEKDAYS.map((d, i) => (
+                <label className="check" key={d}>
+                  <input
+                    type="checkbox"
+                    checked={c.weekdays.includes(i)}
+                    disabled={c.weekdays.length === 1 && c.weekdays.includes(i)}
+                    onChange={() =>
+                      setCalendars({
+                        ...calendars,
+                        [name]: { ...c, weekdays: toggle(c.weekdays, i) },
+                      })
+                    }
+                  />
+                  {d}
+                </label>
+              ))}
+            </div>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={c.project_holidays}
+                onChange={(e) =>
+                  setCalendars({
+                    ...calendars,
+                    [name]: { ...c, project_holidays: e.target.checked },
+                  })
+                }
+              />
+              Respeta los festivos del proyecto
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                const { [name]: _, ...rest } = calendars;
+                setCalendars(rest);
+              }}
+            >
+              <Trash2 size={13} /> Quitar calendario
+            </button>
+          </div>
+        ))}
+        <div className="holiday-entry">
+          <input
+            aria-label="Nombre del calendario"
+            placeholder="Ej. Curado continuo"
+            value={newName}
+            maxLength={160}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button
+            type="button"
+            disabled={!newName.trim() || !!calendars[newName.trim()]}
+            onClick={() => {
+              setCalendars({
+                ...calendars,
+                [newName.trim()]: {
+                  weekdays: [0, 1, 2, 3, 4, 5, 6],
+                  holidays: [],
+                  project_holidays: true,
+                },
+              });
+              setNewName("");
+            }}
+          >
+            <Plus size={14} /> Crear calendario
+          </button>
+        </div>
+        <div className="actions">
+          <button type="button" onClick={close}>
+            Cancelar
+          </button>
+          <button className="primary">Aplicar al cronograma</button>
+        </div>
+      </form>
+    </Modal>
   );
 }

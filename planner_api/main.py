@@ -29,7 +29,7 @@ from .auth import Account, require_project
 from .auth import router as auth_router
 from .db import INTEGRITY_ERRORS, close_pools, connect, database_url, initialize
 from .models import ArchiveIssue, Mapping, Options, Plan, Project, ReportOptions
-from .planning import schedule
+from .planning import ScheduleError, phases, schedule
 from .project_xml import project_xml
 from . import social
 from .tables import (
@@ -90,7 +90,11 @@ async def local_origin(request: Request, call_next):
 
 @app.exception_handler(ValueError)
 async def invalid(request, exc):
-    return JSONResponse({"detail": str(exc)}, status_code=422)
+    body = {"detail": str(exc)}
+    if isinstance(exc, ScheduleError):
+        # Which activity and field to highlight in the schedule editor.
+        body["error"] = exc.info()
+    return JSONResponse(body, status_code=422)
 
 
 def project(db, pid, revision=None, *, trashed=False):
@@ -171,6 +175,11 @@ def issue_review(db, pid, data):
 
 def scheduled(plan, data):
     return schedule(plan, {i: v["detail"] for i, v in data.items()})
+
+
+def timeline(plan, data):
+    rows = scheduled(plan, data)
+    return {"schedule": rows, "phases": phases(plan, rows)}
 
 
 logger = logging.getLogger("civil_bim.storage")
@@ -409,7 +418,7 @@ def state(pid: int):
             "results": data,
             "issue_review": issue_review(db, pid, data),
             "plan": plan.model_dump(mode="json"),
-            "schedule": scheduled(plan, data),
+            **timeline(plan, data),
             "events": [
                 dict(r)
                 for r in db.execute(
@@ -756,6 +765,14 @@ def assign(
     return {"id": sid}
 
 
+@project_routes.post("/plan/preview")
+def preview_plan(pid: int, plan: Plan):
+    """Compute a draft schedule without saving it (live editing)."""
+    with connect() as db:
+        project(db, pid)
+        return timeline(plan, results(db, pid))
+
+
 @project_routes.put("/plan")
 def update_plan(pid: int, plan: Plan, revision: int = Header(alias="If-Match")):
     with connect(True, project=pid) as db:
@@ -777,7 +794,7 @@ def export_plan(pid: int):
         if not rows:
             raise ValueError("Crea una actividad antes de exportar.")
     return Response(
-        project_xml(p["name"], plan, rows),
+        project_xml(p["name"], plan, rows, phases(plan, rows)),
         media_type="application/xml",
         headers={"Content-Disposition": 'attachment; filename="Cronograma.xml"'},
     )

@@ -296,6 +296,37 @@ class Storage(unittest.TestCase):
             main.levels_as_category = original
         self.assertEqual(len(calls), 1)
 
+    def test_plan_preview_and_errors_for_the_editor(self):
+        plan = self.client.get(self.base).json()["plan"]
+        draft = {
+            **plan,
+            "start": "2026-11-02",
+            "groups": {"1": "Cimentación"},
+            "tasks": [
+                {"id": 1, "wbs": "1.1", "name": "Excavación", "duration": 5},
+                {
+                    "id": 2,
+                    "wbs": "1.2",
+                    "name": "Entrega",
+                    "duration": 0,
+                    "links": [{"predecessor": 1}],
+                },
+            ],
+        }
+        preview = self.client.post(self.base + "/plan/preview", json=draft)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        body = preview.json()
+        self.assertEqual(body["schedule"][1]["start"], "2026-11-06")
+        self.assertEqual(body["phases"][0]["name"], "Cimentación")
+        # Nothing was saved by the preview.
+        self.assertEqual(self.client.get(self.base).json()["plan"]["tasks"], [])
+        draft["tasks"][0]["links"] = [{"predecessor": 2}]
+        error = self.client.post(self.base + "/plan/preview", json=draft)
+        self.assertEqual(error.status_code, 422)
+        self.assertIn("Dependencia circular", error.json()["detail"])
+        self.assertEqual(sorted(error.json()["error"]["cycle"]), [1, 2])
+        self.assertEqual(error.json()["error"]["field"], "links")
+
     def test_database_size_only_for_administrator(self):
         self.assertNotIn("database", self.usage())
         with TestClient(app) as admin:
