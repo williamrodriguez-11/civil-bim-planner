@@ -2185,12 +2185,9 @@ button.danger:hover {
   .planner-details {
     max-height: none;
   }
-  .planner-details .details-body {
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    align-items: start;
-  }
-  .planner-details .details-body > :is(.eyebrow, h3, h4, .details-why, .details-actions, .error) {
-    grid-column: 1 / -1;
+  /* Below the grid there is room for two columns of blocks. */
+  .details-columns {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   }
 }
 @media (max-width: 760px) {
@@ -2220,4 +2217,91 @@ button.danger:hover {
 /* On a phone the activity pane would cover the whole Gantt: let it scroll. */
 .planner-scroll.narrow .planner-cells {
   position: relative;
+}
+
+/* Detail panel: titled blocks, one idea each. */
+.details-head {
+  display: grid;
+  gap: 4px;
+}
+.details-columns {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+}
+.details-col {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.details-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.details-card h4 {
+  margin: 0;
+}
+.details-card h4 small {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.details-card > p {
+  margin: 0;
+}
+.details-card summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+details.details-card:not([open]) {
+  gap: 0;
+}
+.details-card.details-why {
+  background: var(--soft);
+  border-color: transparent;
+}
+.details-empty {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--soft);
+  font-size: 13px;
+}
+.details-link-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.details-link-head button {
+  padding: 5px 9px;
+}
+.date-field {
+  display: flex;
+  gap: 6px;
+}
+.date-field input {
+  flex: 1;
+  min-width: 0;
+}
+.date-field button {
+  padding: 5px 9px;
+}
+
+details.details-card {
+  margin: 0;
+}
+details.details-card:not([open]) {
+  padding-block: 12px;
+}
+.details-card summary {
+  margin-bottom: 0;
 }

@@ -169,15 +169,16 @@ test("Enter añade filas, Tab pasa de celda y el seguimiento compara el avance",
     page.getByRole("button", { name: "Guardar cronograma" }),
   ).toBeDisabled();
   await page.getByLabel("Duración en días laborables de Replanteo").fill("2");
-  // Progress and status date.
-  await page.getByLabel("Nombre de la actividad 1").focus();
-  await page.getByLabel("% completado").fill("25");
+  // The detail panel explains the activity in plain blocks.
+  await page.getByLabel("Nombre de la actividad 1", { exact: true }).focus();
+  const details = page.locator(".planner-details");
+  await expect(details).toContainText("Resumen");
+  await expect(details).toContainText("¿De qué depende?");
+  await expect(details).toContainText("No depende de ninguna");
+  await expect(details.getByLabel("% completado")).toHaveCount(0);
   await page.getByRole("button", { name: "Calendario y seguimiento" }).click();
   await page.getByLabel("Fecha de seguimiento (opcional)").fill("2026-11-02");
   await page.getByRole("button", { name: "Aplicar al cronograma" }).click();
-  await expect(page.locator(".planner-details")).toContainText(
-    "Previsto a la fecha de seguimiento: 50 %",
-  );
   await page.getByRole("button", { name: "Guardar cronograma" }).click();
   await expect(page.getByText("Cronograma guardado.")).toBeVisible();
   const saved = await (await page.request.get(`/api/projects/${id}`)).json();
@@ -185,7 +186,7 @@ test("Enter añade filas, Tab pasa de celda y el seguimiento compara el avance",
     "Replanteo",
     "Instalaciones",
   ]);
-  expect(saved.schedule[0].progress).toBe(25);
+  expect(saved.plan.status_date).toBe("2026-11-02");
   expect(saved.schedule[0].planned).toBe(50);
   // Clearing a saved activity's name is an error, not a silent delete.
   const name = page.getByLabel("Nombre de la actividad 1", { exact: true });
