@@ -128,10 +128,14 @@ function Shares({
   parts,
   unit,
   names,
+  unmeasured,
 }: {
-  parts: { name: string; value: number | null; label: string }[];
+  /** complete: every row of the group has the measurement. */
+  parts: { name: string; value: number | null; label: string; complete: boolean }[];
   unit: string;
   names: string[];
+  /** Groups with no row measured at all. */
+  unmeasured: number;
 }) {
   const [active, setActive] = useState<string | null>(null),
     [grown, setGrown] = useState(false);
@@ -159,8 +163,9 @@ function Shares({
       ? [{ key: REST, name: `Otros (${rest.length})`, value: restValue }]
       : []),
   ];
-  // Parts whose measurement is incomplete cannot be placed in the whole.
-  const incomplete = parts.filter((p) => p.value === null).length;
+  // Groups with missing rows: their sum is partial (or, for areas, unknown).
+  const incomplete = parts.filter((p) => !p.complete).length + unmeasured;
+  const groupCount = parts.length + unmeasured;
   const focus = blocks.find((b) => b.key === active);
   const summary = blocks
     .map((b) => `${b.name}: ${pct((b.value / total) * 100)}`)
@@ -181,14 +186,17 @@ function Shares({
         </small>
         {!!incomplete && (
           <p className="notice">
-            {incomplete} de {parts.length} grupos no tienen la medición completa
-            y no entran en el reparto. Los porcentajes son sobre lo medido.
+            {incomplete} de {groupCount} grupos no tienen la medición completa.
+            El total y los porcentajes son solo sobre lo medido. Si mezclas
+            elementos que no usan esta medida, elige una categoría arriba.
           </p>
         )}
       </div>
       {!total && (
         <p className="notice">
-          Todas las cantidades medidas son cero: no hay reparto que dibujar.
+          {parts.some((p) => p.value === 0)
+            ? "Las cantidades medidas son cero: no hay reparto que dibujar."
+            : "Ningún grupo tiene una medición completa para repartir."}
         </p>
       )}
       <div
@@ -545,9 +553,11 @@ export function Overview({
                 name,
                 value: measurementTotal(measure),
                 label: totalLabel(measure),
+                complete: measure.measuredRows === measure.sourceRows,
               }))}
               unit={unitLabel(selected.unit)}
               names={Array.from(groups.keys())}
+              unmeasured={groups.size - sums.length}
             />
           ) : sums.length ? (
             <div className="bars">

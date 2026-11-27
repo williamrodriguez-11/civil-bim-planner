@@ -222,8 +222,8 @@ def summarize(detail: pd.DataFrame) -> pd.DataFrame:
     for key, missing_label in [
         ("Volumen (m³)", "Filas sin volumen"),
         ("Área (m²)", "Filas sin área"),
-        ("Longitud (m)", None),
-        ("Masa (kg)", None),
+        ("Longitud (m)", "Filas sin longitud"),
+        ("Masa (kg)", "Filas sin masa"),
     ]:
         if key not in detail or detail[key].isna().all():
             continue

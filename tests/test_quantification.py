@@ -150,6 +150,10 @@ class QuantityTests(unittest.TestCase):
         partial = pd.concat([result.detail, result.detail.assign(**{"Área (m²)": 2.0})])
         self.assertTrue(pd.isna(summarize(partial).iloc[0]["Área (m²)"]))
         self.assertEqual(summarize(partial).iloc[0]["Filas sin área"], 1)
+        # Partial length is flagged too; a length nobody measured gets no column.
+        lengths = partial.assign(**{"Longitud (m)": [3.0, None]})
+        self.assertEqual(summarize(lengths).iloc[0]["Filas sin longitud"], 1)
+        self.assertNotIn("Masa (kg)", summarize(lengths))
 
     def test_config_errors(self):
         frame = self.frame([["N1", 1, 1, "a"]])
