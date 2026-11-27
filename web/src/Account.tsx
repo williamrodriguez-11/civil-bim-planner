@@ -24,9 +24,12 @@ export function Account({
   // must not replace the new account.
   const manual = useRef(false);
   const probed = useRef<User | null>(null);
+  // After the first submission, background check errors stay out of the form.
+  const submitted = useRef(false);
 
   useEffect(() => {
     const expired = () => {
+      probed.current = null;
       setLeaving(false);
       setBusy(false);
       setUser(null);
@@ -62,7 +65,9 @@ export function Account({
         } else if (r.status !== 401)
           throw Error("No se pudo comprobar la sesión.");
       })
-      .catch((e) => setError(cleanError(e)))
+      .catch((e) => {
+        if (!submitted.current) setError(cleanError(e));
+      })
       .finally(() => setLoading(false));
     return () => {
       window.removeEventListener("civil-session-expired", expired);
@@ -84,6 +89,7 @@ export function Account({
   }
 
   async function logout() {
+    probed.current = null;
     await api("/auth/logout", { method: "POST" });
     sessionChanged();
     setRegister(false);
@@ -115,6 +121,7 @@ export function Account({
             onSubmit={async (event) => {
               event.preventDefault();
               manual.current = true;
+              submitted.current = true;
               setBusy(true);
               setError("");
               try {
@@ -130,15 +137,19 @@ export function Account({
                 setLeaving(true);
                 if (!prefersReducedMotion())
                   await new Promise((done) => setTimeout(done, 650));
+                probed.current = null;
                 sessionChanged();
                 setUser(result);
                 setLeaving(false);
               } catch (e) {
                 manual.current = false;
                 setLeaving(false);
-                if (probed.current) {
+                // The session check that overlapped this attempt is used once.
+                const existing = probed.current;
+                probed.current = null;
+                if (existing) {
                   // The visitor already had a valid session.
-                  setUser(probed.current);
+                  setUser(existing);
                   return;
                 }
                 // Keep the username; select the password to type it again.

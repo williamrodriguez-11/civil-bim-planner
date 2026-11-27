@@ -65,7 +65,9 @@ test("Movimiento reducido: imagen fija, sin Three.js y acceso inmediato", async 
   const scripts: string[] = [];
   page.on("request", (r) => scripts.push(r.url()));
   await page.goto("/");
-  await expect(page.locator(".login-scene.is-still .structure-still")).toBeVisible();
+  await expect(
+    page.locator(".login-scene.is-still .structure-still"),
+  ).toBeVisible();
   await expect(page.locator(".login-scene canvas")).toHaveCount(0);
   await page
     .getByLabel("Nombre de usuario o correo electrónico")
@@ -85,9 +87,22 @@ test("Si la escena no descarga o se pausa, queda la imagen fija y el acceso sigu
   const context = await browser.newContext();
   const page = await context.newPage();
   await register(page);
-  await page.route(/LoginScene-.*\.js$/, (route) => route.abort());
+  // These checks need a browser that can animate at all.
+  const webgl = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    return !!(canvas.getContext("webgl2") || canvas.getContext("webgl"));
+  });
+  test.skip(!webgl, "Este navegador no tiene WebGL: solo usa la imagen fija.");
+  let requested = false;
+  await page.route(/LoginScene-.*\.js$/, (route) => {
+    requested = true;
+    return route.abort();
+  });
   await page.goto("/");
-  await expect(page.locator(".login-scene.is-still .structure-still")).toBeVisible();
+  await expect(
+    page.locator(".login-scene.is-still .structure-still"),
+  ).toBeVisible();
+  expect(requested).toBe(true);
   await expect(
     page.getByLabel("Nombre de usuario o correo electrónico"),
   ).toBeEditable();
@@ -99,7 +114,9 @@ test("Si la escena no descarga o se pausa, queda la imagen fija y el acceso sigu
   await expect(fresh.locator(".login-scene.is-ready canvas")).toBeVisible();
   await fresh.getByRole("button", { name: "Pausar animación" }).click();
   await expect(fresh.locator(".login-scene canvas")).toHaveCount(0);
-  await expect(fresh.locator(".login-scene.is-still .structure-still")).toBeVisible();
+  await expect(
+    fresh.locator(".login-scene.is-still .structure-still"),
+  ).toBeVisible();
   await fresh.reload();
   await expect(fresh.getByRole("button", { name: "Animar" })).toBeVisible();
   await expect(fresh.locator(".login-scene canvas")).toHaveCount(0);
