@@ -285,8 +285,10 @@ test("Importa un XLSX con portada y encabezado desplazado después de recuperar 
   await page.reload();
   await page.getByRole("button", { name: "Tablas de origen", exact: true }).click();
   await page.getByRole("button", { name: /Papelera de tablas/ }).click();
-  await expect(dialog).toContainText("Mediciones.xlsx · Mediciones");
-  await dialog.getByRole("button", { name: "Restaurar" }).click();
+  const row = page.locator(".trash-row").filter({ hasText: "Mediciones.xlsx · Mediciones" });
+  await row.getByRole("button", { name: "Restaurar" }).click();
+  await expect(page.getByText("No hay tablas en la papelera de este proyecto")).toBeVisible();
+  await page.getByRole("button", { name: "Tablas de origen", exact: true }).click();
   await expect(page.getByLabel("Tabla activa")).toContainText("Mediciones.xlsx");
   await page.getByText("Revisar filas de origen", { exact: true }).click();
   await expect(page.getByRole("cell", { name: "Sótano", exact: true })).toBeVisible();

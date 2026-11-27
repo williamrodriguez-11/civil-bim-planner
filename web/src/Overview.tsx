@@ -1,5 +1,5 @@
 import { reviewRow } from "./review";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -113,6 +113,138 @@ function LevelCategoryFix({
         )}
       </div>
       {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+const SERIES = 6;
+const pct = (n: number) =>
+  n.toLocaleString("es-CO", { maximumFractionDigits: 1 }) + " %";
+
+/** One whole split into parts: a tall segmented bar plus a legend list.
+ * Colors follow each name (natural order), never its rank. */
+function Shares({
+  parts,
+  unit,
+  names,
+}: {
+  parts: { name: string; value: number | null; label: string }[];
+  unit: string;
+  names: string[];
+}) {
+  const [active, setActive] = useState<string | null>(null),
+    [grown, setGrown] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const measured = parts.filter((p) => p.value !== null && p.value > 0);
+  const total = measured.reduce((n, p) => n + (p.value ?? 0), 0);
+  if (!total)
+    return (
+      <div className="chart-empty">
+        <b>Sin cantidades para repartir</b>
+      </div>
+    );
+  const order = [...names].sort((a, b) =>
+    a.localeCompare(b, "es", { numeric: true }),
+  );
+  // More than six parts: the five largest keep a color, the rest fold into «Otros».
+  const shown = measured.length > SERIES ? measured.slice(0, SERIES - 1) : measured;
+  const rest = measured.slice(shown.length);
+  const colored = order.filter((n) => shown.some((p) => p.name === n));
+  const color = (name: string) =>
+    shown.some((p) => p.name === name)
+      ? `var(--series-${colored.indexOf(name) + 1})`
+      : "var(--series-other)";
+  const restValue = rest.reduce((n, p) => n + (p.value ?? 0), 0);
+  const blocks = [
+    ...shown.map((p) => ({ key: p.name, name: p.name, value: p.value ?? 0 })),
+    ...(rest.length
+      ? [{ key: "Otros", name: `Otros (${rest.length})`, value: restValue }]
+      : []),
+  ];
+  const focus = blocks.find((b) => b.key === active);
+  const summary = blocks
+    .map((b) => `${b.name}: ${pct((b.value / total) * 100)}`)
+    .join(", ");
+  return (
+    <div className="shares" onMouseLeave={() => setActive(null)}>
+      <div className="shares-head">
+        <span>Total</span>
+        <strong>
+          {fmt(total)} {unit}
+        </strong>
+        <small aria-live="polite">
+          {focus
+            ? `${focus.name} · ${fmt(focus.value)} ${unit} · ${pct(
+                (focus.value / total) * 100,
+              )}`
+            : "Pasa el cursor por el gráfico o la lista"}
+        </small>
+      </div>
+      <div className="shares-bar" role="img" aria-label={"Reparto: " + summary}>
+        {blocks.map((b) => {
+          const share = (b.value / total) * 100;
+          return (
+            <span
+              key={b.key}
+              tabIndex={0}
+              className={active ? (active === b.key ? "on" : "off") : ""}
+              style={{
+                flexGrow: grown ? b.value : 0,
+                background:
+                  b.key === "Otros" ? "var(--series-other)" : color(b.key),
+              }}
+              title={`${b.name} · ${fmt(b.value)} ${unit} · ${pct(share)}`}
+              onMouseEnter={() => setActive(b.key)}
+              onFocus={() => setActive(b.key)}
+              onBlur={() => setActive(null)}
+            >
+              {share >= 9 && (
+                <b
+                  style={
+                    colored.indexOf(b.key) === 3 ? { color: "#0b0b0b" } : undefined
+                  }
+                >
+                  {pct(Math.round(share))}
+                </b>
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <ul className="shares-list">
+        {parts.map((p) => {
+          const key = shown.some((s) => s.name === p.name)
+            ? p.name
+            : p.value
+              ? "Otros"
+              : null;
+          const share = p.value && total ? (p.value / total) * 100 : null;
+          return (
+            <li
+              key={p.name}
+              className={
+                active && key ? (active === key ? "on" : "off") : ""
+              }
+              onMouseEnter={() => key && setActive(key)}
+            >
+              <i
+                style={{
+                  background: key
+                    ? key === "Otros"
+                      ? "var(--series-other)"
+                      : color(p.name)
+                    : "transparent",
+                }}
+              />
+              <span>{p.name}</span>
+              <b>{p.label}</b>
+              <small>{share === null ? "—" : pct(share)}</small>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -389,28 +521,15 @@ export function Overview({
               }))}
             />
           ) : sums.length && chartView === "Proporciones" ? (
-            <div className="proportions">
-              {sums.map(({ name, measure }) => {
-                const total = sums.reduce(
-                  (n, s) => n + (measurementTotal(s.measure) ?? 0),
-                  0,
-                );
-                const percent = total
-                  ? ((measurementTotal(measure) ?? 0) / total) * 100
-                  : 0;
-                return (
-                  <div key={name}>
-                    <label>
-                      {name}
-                      <strong>
-                        {fmt(percent)} % · {totalLabel(measure)}
-                      </strong>
-                    </label>
-                    <progress max={100} value={percent} />
-                  </div>
-                );
-              })}
-            </div>
+            <Shares
+              parts={sums.map(({ name, measure }) => ({
+                name,
+                value: measurementTotal(measure),
+                label: totalLabel(measure),
+              }))}
+              unit={unitLabel(selected.unit)}
+              names={Array.from(groups.keys())}
+            />
           ) : sums.length ? (
             <div className="bars">
               {selected.measuredRows < selected.sourceRows && (

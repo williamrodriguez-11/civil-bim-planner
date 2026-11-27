@@ -20,7 +20,6 @@ import {
   Ruler,
   Sun,
   Trash2,
-  Undo2,
 } from "lucide-react";
 import "@fontsource-variable/inter";
 import "./style.css";
@@ -41,10 +40,12 @@ import { Overview, Quantities } from "./Overview";
 import { Schedule } from "./Schedule";
 import { Tables } from "./Tables";
 import { Account } from "./Account";
+import { Trash } from "./Trash";
 
 const modules = [
   { name: "Resumen", I: LayoutDashboard },
   { name: "Proyectos", I: FolderOpen },
+  { name: "Papelera", I: Trash2 },
   { name: "Tablas de origen", I: Files },
   { name: "Cuantificación", I: Ruler },
   { name: "Programación", I: CalendarRange },
@@ -58,6 +59,8 @@ const description: Record<Page, string> = {
   Programación:
     "Vincula mediciones, rendimientos y dependencias al calendario de obra.",
   Reportes: "Genera y consulta entregables técnicos del proyecto.",
+  Papelera:
+    "Recupera lo que borraste o elimínalo para siempre y libera espacio.",
 };
 type Fields = Pick<
   Project,
@@ -427,17 +430,14 @@ function App({
     [quantityTab, setQuantityTab] = useState<QuantityTab>(),
     [quantityTableId, setQuantityTableId] = useState(0),
     [form, setForm] = useState<"new" | "edit" | null>(null);
-  const [showTrash, setShowTrash] = useState(false),
-    [toDelete, setToDelete] = useState<Project | null>(null),
+  const [toDelete, setToDelete] = useState<Project | null>(null),
     [pending, setPending] = useState(false),
     [actionError, setActionError] = useState(""),
     [notice, setNotice] = useState(""),
     [usage, setUsage] = useState<Usage | null>(null),
     [toPurge, setToPurge] = useState<Project[] | null>(null);
   const projects = catalog.filter((p) => !p.deleted_at);
-  const visibleProjects = showTrash
-    ? catalog.filter((p) => p.deleted_at)
-    : projects;
+  const trashedProjects = catalog.filter((p) => p.deleted_at);
   const [compact, setCompact] = useState(false),
     [mobile, setMobile] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("civil-theme") === "dark");
@@ -482,7 +482,7 @@ function App({
     void init();
   }, []);
   useEffect(() => {
-    if (page !== "Proyectos") return;
+    if (page !== "Proyectos" && page !== "Papelera") return;
     let live = true;
     api<Usage>("/usage")
       .then((u) => live && setUsage(u))
@@ -584,7 +584,6 @@ function App({
     setQuantityTab(tab);
     setQuantityTableId(tableId);
     setPage(p);
-    setShowTrash(false);
     setNotice("");
     setActionError("");
     setMobile(false);
@@ -633,11 +632,11 @@ function App({
         </div>
         <div className="nav-group">
           <div className="nav-title">ESPACIO DE TRABAJO</div>
-          {nav(modules.slice(0, 2))}
+          {nav(modules.slice(0, 3))}
         </div>
         <div className="nav-group">
           <div className="nav-title">MÓDULOS</div>
-          {nav(modules.slice(2))}
+          {nav(modules.slice(3))}
         </div>
         <div className="side-bottom">
           <div className="local">
@@ -703,50 +702,15 @@ function App({
                 <i />
                 {page === "Resumen"
                   ? "CENTRO DE CONTROL"
-                  : page === "Proyectos"
+                  : page === "Proyectos" || page === "Papelera"
                     ? "ESPACIO DE TRABAJO"
                     : "MÓDULO DE PROYECTO"}
               </div>
-              <h1>
-                {page === "Resumen"
-                  ? "Resumen general"
-                  : page === "Proyectos" && showTrash
-                    ? "Papelera"
-                    : page}
-              </h1>
-              <p>
-                {page === "Proyectos" && showTrash
-                  ? "Restaura un proyecto para volver a trabajar con sus datos."
-                  : description[page]}
-              </p>
+              <h1>{page === "Resumen" ? "Resumen general" : page}</h1>
+              <p>{description[page]}</p>
             </div>
             {page === "Resumen" && newProjectButton}
-            {page === "Proyectos" && (
-              <div className="tools project-tools">
-                <button
-                  onClick={() => {
-                    setShowTrash(!showTrash);
-                    setNotice("");
-                    setActionError("");
-                  }}
-                >
-                  {showTrash ? <FolderOpen size={15} /> : <Trash2 size={15} />}
-                  {showTrash ? "Volver a proyectos" : "Papelera"}
-                </button>
-                {showTrash && !!visibleProjects.length && (
-                  <button
-                    disabled={pending}
-                    onClick={() => {
-                      setActionError("");
-                      setToPurge(visibleProjects);
-                    }}
-                  >
-                    <Trash2 size={15} /> Vaciar papelera
-                  </button>
-                )}
-                {!showTrash && newProjectButton}
-              </div>
-            )}
+            {page === "Proyectos" && newProjectButton}
           </div>
           {error && (
             <div className="error" role="alert">
@@ -765,6 +729,32 @@ function App({
               create={() => setForm("new")}
               mutate={mutate}
             />
+          ) : page === "Papelera" ? (
+            <>
+              {notice && (
+                <p className="notice" role="status">
+                  {notice}
+                </p>
+              )}
+              {actionError && !toPurge && (
+                <p className="error" role="alert">
+                  {actionError}
+                </p>
+              )}
+              <UsageBar usage={usage} />
+              <Trash
+                projects={trashedProjects}
+                state={state}
+                mutate={mutate}
+                pending={pending}
+                restoreProject={changeProjectVisibility}
+                purgeProjects={(list) => {
+                  setActionError("");
+                  setNotice("");
+                  setToPurge(list);
+                }}
+              />
+            </>
           ) : page === "Proyectos" ? (
             <>
               {notice && (
@@ -779,7 +769,7 @@ function App({
               )}
               <UsageBar usage={usage} />
               <div className="project-list">
-                {visibleProjects.map((p) => (
+                {projects.map((p) => (
                   <section className="panel" key={p.id}>
                     <div className="section-title">
                       <Building2 />
@@ -793,25 +783,7 @@ function App({
                         " · " + bytesLabel(usage.projects[p.id])}
                     </small>
                     <div className="actions">
-                      {showTrash ? (
-                        <>
-                          <button
-                            disabled={pending}
-                            onClick={() => changeProjectVisibility(p)}
-                          >
-                            <Undo2 size={15} /> Restaurar
-                          </button>
-                          <button
-                            disabled={pending}
-                            onClick={() => {
-                              setActionError("");
-                              setToPurge([p]);
-                            }}
-                          >
-                            <Trash2 size={15} /> Eliminar definitivamente
-                          </button>
-                        </>
-                      ) : (
+                      {
                         <>
                           <button
                             onClick={async () => {
@@ -836,19 +808,16 @@ function App({
                             <Trash2 size={15} /> Borrar proyecto
                           </button>
                         </>
-                      )}
+                      }
                     </div>
                   </section>
                 ))}
-                {!visibleProjects.length &&
-                  (showTrash ? (
-                    <Empty title="La papelera está vacía" />
-                  ) : (
-                    <Empty title="Crea tu primer proyecto">
-                      Usa Nuevo proyecto para guardar su ficha y comenzar la
-                      importación.
-                    </Empty>
-                  ))}
+                {!projects.length && (
+                  <Empty title="Crea tu primer proyecto">
+                    Usa Nuevo proyecto para guardar su ficha y comenzar la
+                    importación.
+                  </Empty>
+                )}
               </div>
             </>
           ) : !state ? (
@@ -866,6 +835,7 @@ function App({
                 <Tables
                   state={state}
                   mutate={mutate}
+                  openTrash={() => go("Papelera")}
                   viewQuantities={(tab, tableId) => go("Cuantificación", tab, tableId)}
                 />
               ) : page === "Cuantificación" ? (

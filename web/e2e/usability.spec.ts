@@ -25,7 +25,8 @@ test("El espacio de trabajo se adapta y permite elegir el contenido del reporte"
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   await page.getByRole("button", { name: "Proporciones", exact: true }).click();
-  await expect(page.locator(".proportions")).toContainText("66,667 %");
+  await expect(page.locator(".shares-list")).toContainText("66,7 %");
+  await expect(page.locator(".shares-bar")).toHaveAttribute("aria-label", /66,7 %/);
   await page.getByRole("button", { name: "Tabla", exact: true }).click();
   await expect(page.getByRole("cell", { name: "P1", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cuantificación", exact: true }).click();

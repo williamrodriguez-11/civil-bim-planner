@@ -56,7 +56,10 @@ def export_excel(detail: pd.DataFrame, issues: pd.DataFrame,
         write_frame("Proyecto", pd.DataFrame(project_info.items(), columns=["Concepto", "Valor"]))
         book.move_sheet("Proyecto", offset=-1)
     write_frame("Resumen por nivel", summarize(detail), existing=True)
-    write_frame("Detalle", detail)
+    # Una magnitud que ninguna fila midió no aporta una columna vacía.
+    empty = [c for c in ("Volumen (m³)", "Área (m²)", "Longitud (m)", "Masa (kg)")
+             if c in detail and detail[c].isna().all()]
+    write_frame("Detalle", detail.drop(columns=empty))
     write_frame("Incidencias", issues)
     settings = []
     for filename, config, import_options in configs:

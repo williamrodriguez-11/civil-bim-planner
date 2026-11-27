@@ -6,7 +6,8 @@ export type Page =
   | "Tablas de origen"
   | "Cuantificación"
   | "Programación"
-  | "Reportes";
+  | "Reportes"
+  | "Papelera";
 export interface Project {
   id: number;
   name: string;

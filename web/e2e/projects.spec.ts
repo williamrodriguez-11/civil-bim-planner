@@ -22,6 +22,9 @@ test("Borrar y restaurar proyectos desde la papelera", async ({
       has: page.getByRole("heading", { name, exact: true }),
     });
   const dialog = page.getByRole("dialog");
+  const trash = page.getByRole("button", { name: "Papelera", exact: true });
+  const trashRow = (name: string) =>
+    page.locator(".trash-row").filter({ hasText: name });
   async function moveToTrash(name: string) {
     await card(name).getByRole("button", { name: "Borrar proyecto" }).click();
     await expect(dialog).toContainText(name);
@@ -35,9 +38,9 @@ test("Borrar y restaurar proyectos desde la papelera", async ({
   await expect(card(first)).toBeVisible();
   await moveToTrash(first);
   await expect(picker.locator("option:checked")).toHaveText(second);
-  await page.getByRole("button", { name: "Papelera", exact: true }).click();
-  await card(first).getByRole("button", { name: "Restaurar" }).click();
-  await page.getByRole("button", { name: "Volver a proyectos" }).click();
+  await trash.click();
+  await trashRow(first).getByRole("button", { name: "Restaurar" }).click();
+  await projects.click();
   await expect(card(first)).toBeVisible();
   await moveToTrash(second);
   await expect(picker.locator("option:checked")).toHaveText(first);
@@ -45,12 +48,16 @@ test("Borrar y restaurar proyectos desde la papelera", async ({
   await expect(picker).toHaveCount(0);
   await expect(page.getByText("Crea tu primer proyecto")).toBeVisible();
   await page.reload();
-  await projects.click();
-  await page.getByRole("button", { name: "Papelera", exact: true }).click();
-  await expect(card(first)).toBeVisible();
-  await expect(card(second)).toBeVisible();
-  await card(first).getByRole("button", { name: "Restaurar" }).click();
+  await trash.click();
+  await expect(trashRow(first)).toBeVisible();
+  await expect(trashRow(second)).toBeVisible();
+  await trashRow(first).getByRole("button", { name: "Restaurar" }).click();
   await expect(picker.locator("option:checked")).toHaveText(first);
-  await page.getByRole("button", { name: "Volver a proyectos" }).click();
+  await projects.click();
   await moveToTrash(first);
+  // Permanent deletion asks for confirmation and empties the trash.
+  await trash.click();
+  await page.getByRole("button", { name: "Vaciar proyectos" }).click();
+  await dialog.getByRole("button", { name: "Eliminar definitivamente" }).click();
+  await expect(page.getByText("No hay proyectos en la papelera")).toBeVisible();
 });
