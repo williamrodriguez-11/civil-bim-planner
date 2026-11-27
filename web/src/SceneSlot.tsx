@@ -114,7 +114,10 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
         role="img"
         aria-label="Ilustración de un edificio de concreto en construcción sobre sus ejes de replanteo"
       >
-        <div className="login-scene-poster">{still && <StructureStill />}</div>
+        <div className="login-scene-poster">
+          {/* Still image, or a faint silhouette while the scene downloads. */}
+          <StructureStill />
+        </div>
         {mode === "scene" && (
           <SceneBoundary onError={fail}>
             <Suspense fallback={null}>

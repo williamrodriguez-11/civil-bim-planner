@@ -137,6 +137,9 @@
   padding: 6%;
   transition: opacity 0.6s ease;
 }
+.login-scene:not(.is-still) .login-scene-poster {
+  opacity: 0.18;
+}
 .login-scene.is-ready:not(.is-still) .login-scene-poster {
   opacity: 0;
 }

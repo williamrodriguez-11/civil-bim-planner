@@ -28,6 +28,8 @@ const EDGE = new Color("#8fb5a2");
 const ACCENT = new Color("#cfeb9e");
 const ACCENT_LIT = new Color("#e6f7c4");
 const ELEVATION = Math.asin(1 / Math.sqrt(3)); // true isometric
+// Push-in on a successful sign-in; the framing leaves room for it.
+const SUCCESS_ZOOM = 1.1;
 const ease = (p: number) => 1 - Math.pow(1 - p, 3);
 const clamp = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -192,7 +194,7 @@ export default function LoginScene({
           }
         }
       const aspect = w / h;
-      const size = Math.max(halfY, half / aspect) * 1.04;
+      const size = Math.max(halfY, half / aspect) * (1.04 * SUCCESS_ZOOM);
       camera.left = -size * aspect;
       camera.right = size * aspect;
       camera.top = size;
@@ -283,7 +285,9 @@ export default function LoginScene({
       view.pitch += ((aim.active ? aim.pitch : 0) - view.pitch) * 0.08;
       place(view.yaw, view.pitch);
       camera.zoom =
-        status === "success" ? 1 + 0.35 * ease(clamp(since / 0.6)) : 1;
+        status === "success"
+          ? 1 + (SUCCESS_ZOOM - 1) * ease(clamp(since / 0.6))
+          : 1;
       camera.updateProjectionMatrix();
 
       renderer.render(scene, camera);
