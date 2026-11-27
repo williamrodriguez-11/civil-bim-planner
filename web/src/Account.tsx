@@ -23,6 +23,7 @@ export function Account({
   // Once the person signs in, a late answer of the initial session check
   // must not replace the new account.
   const manual = useRef(false);
+  const probed = useRef<User | null>(null);
 
   useEffect(() => {
     const expired = () => {
@@ -45,13 +46,19 @@ export function Account({
     if (result === "error")
       setError("No se completó el acceso. Puedes volver a intentarlo.");
     if (result === "ok")
-      localStorage.setItem("civil-session-change", crypto.randomUUID());
+      try {
+        localStorage.setItem("civil-session-change", crypto.randomUUID());
+      } catch {
+        // Other tabs simply won't refresh on their own.
+      }
     if (result) history.replaceState(null, "", location.pathname);
     fetch("/api/auth/me", { cache: "no-store" })
       .then(async (r) => {
         if (r.ok) {
           const found = await r.json();
-          if (!manual.current) setUser(found);
+          // Held while a sign-in is pending; used if that attempt fails.
+          if (manual.current) probed.current = found;
+          else setUser(found);
         } else if (r.status !== 401)
           throw Error("No se pudo comprobar la sesión.");
       })
@@ -65,7 +72,12 @@ export function Account({
   }, []);
 
   function sessionChanged() {
-    localStorage.setItem("civil-session-change", crypto.randomUUID());
+    try {
+      // Tells other tabs; storage may be blocked, and that is fine.
+      localStorage.setItem("civil-session-change", crypto.randomUUID());
+    } catch {
+      // Other tabs simply won't refresh on their own.
+    }
     setPassword("");
     setVisible(false);
     setError("");
@@ -122,6 +134,13 @@ export function Account({
                 setUser(result);
                 setLeaving(false);
               } catch (e) {
+                manual.current = false;
+                setLeaving(false);
+                if (probed.current) {
+                  // The visitor already had a valid session.
+                  setUser(probed.current);
+                  return;
+                }
                 // Keep the username; select the password to type it again.
                 setError(cleanError(e));
                 passwordField.current?.focus();

@@ -63,14 +63,15 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
   const [stage, setStage] = useState("");
   const [paused, setPaused] = useState(pausedBefore);
   const [failed, setFailed] = useState(false);
+  // Whether this browser can animate at all (WebGL and no reduced motion).
+  const [animatable, setAnimatable] = useState(false);
   useEffect(() => {
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    const decide = () =>
-      setMode(
-        motion?.matches || paused || failed || !webglAvailable()
-          ? "still"
-          : "scene",
-      );
+    const decide = () => {
+      const can = !motion?.matches && webglAvailable();
+      setAnimatable(can);
+      setMode(can && !paused && !failed ? "scene" : "still");
+    };
     // Let the form paint first, then decide and start loading the scene.
     const id = window.setTimeout(decide, 0);
     motion?.addEventListener("change", decide);
@@ -129,7 +130,7 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
         <b>{still ? "Estructura completa" : stage || "Ejes de replanteo"}</b>
       </div>
       {/* Decorative motion longer than 5 s must be stoppable (WCAG 2.2.2). */}
-      {!failed && !prefersReducedMotion() && mode !== "wait" && (
+      {animatable && !failed && mode !== "wait" && (
         <button
           type="button"
           className="login-scene-toggle"
