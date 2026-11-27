@@ -72,6 +72,52 @@ export function measurementTotal(measure: Measurement): number | null {
   return measure.total;
 }
 
+/** Position of a level from bottom to top. Uses the elevation in the name
+ * («NE -2.90m», «NE+14.35m») and otherwise words such as sótano, piso 3 or
+ * cubierta. Unknown names return null and keep their natural order. */
+const ELEVATION = /([+-])\s*(\d+(?:[.,]\d+)?)\s*m\b/;
+const plain = (name: string) =>
+  name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+/** Elevation in meters written in the name («NE -2.90m»), if any. */
+export function levelElevation(name: string): number | null {
+  const found = plain(name).match(ELEVATION);
+  return found ? Number(found[1] + found[2].replace(",", ".")) : null;
+}
+
+/** Floor rank from words and numbers (sótano 1, planta baja, piso 3…),
+ * never from meters: it is compared only with other floor ranks. */
+export function levelHeight(name: string): number | null {
+  const text = plain(name).replace(ELEVATION, " ");
+  const number = Number(text.match(/\d+/)?.[0] ?? 1);
+  if (/cimentaci|fundaci|zapata/.test(text)) return -10000;
+  if (/semi\s*-?\s*sotano/.test(text)) return -500;
+  if (/sotano|basement/.test(text)) return -1000 - number;
+  if (/planta baja|ground|\bpb\b/.test(text)) return 0.5;
+  if (/cubierta|azotea|terraza|roof/.test(text)) return 10000;
+  if (/piso|nivel|planta|level|story|storey/.test(text)) return number;
+  return null;
+}
+
+/** Bottom-to-top comparator for one list of levels. The criterion is the
+ * same for every pair, so the order never depends on the input order:
+ * elevations when every level has one, otherwise floor ranks. */
+export function levelOrder(names: string[]) {
+  const byElevation = names.every((n) => levelElevation(n) !== null);
+  const key = byElevation ? levelElevation : levelHeight;
+  return (a: string, b: string) => {
+    const x = key(a),
+      y = key(b);
+    if (x !== null && y !== null && x !== y) return x - y;
+    if (x !== null && y === null) return -1;
+    if (x === null && y !== null) return 1;
+    return a.localeCompare(b, "es", { numeric: true });
+  };
+}
+
 export function measurementName(measure: Measurement) {
   return measure.category
     ? measure.label + " · " + measure.category

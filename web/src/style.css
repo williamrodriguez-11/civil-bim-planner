@@ -1444,3 +1444,34 @@ button.danger:hover {
 .shares-bar[hidden] {
   display: none;
 }
+.settings {
+  display: grid;
+  gap: 8px;
+}
+.settings label {
+  display: grid;
+  gap: 6px;
+}
+.settings small {
+  color: var(--muted);
+}
+.settings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.sort-select {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 0 14px;
+  font-weight: 560;
+}
+.sort-select select {
+  flex: 1 1 200px;
+  max-width: 340px;
+}
