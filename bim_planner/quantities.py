@@ -207,19 +207,32 @@ def quantify(frame: pd.DataFrame, config: QuantityConfig, filename: str) -> Quan
 
 
 def summarize(detail: pd.DataFrame) -> pd.DataFrame:
-    columns = ["Categoría", "Nivel", "Elementos", "Volumen (m³)", "Área (m²)", "Filas sin área"]
+    """Totals by category and level.
+
+    Only measurements present in the data get a column. A «Filas sin …»
+    column appears only when a measurement is partial: it counts the rows of
+    that group without the value, so the total is not taken as complete.
+    """
+    keys = ["Categoría", "Nivel"]
     if detail.empty:
-        return pd.DataFrame(columns=columns)
-    groups = detail.groupby(["Categoría", "Nivel"], sort=True, dropna=False)
-    summary = groups[["Elementos", "Volumen (m³)", "Área (m²)"]].sum(min_count=1)
-    summary["Filas sin área"] = groups["Área (m²)"].agg(lambda values: values.isna().sum())
-    # No presentar como completo un total de área calculado con datos parciales.
-    summary.loc[summary["Filas sin área"] > 0, "Área (m²)"] = math.nan
-    for key in ["Longitud (m)", "Masa (kg)"]:
-        if key in detail:
-            summary[key] = groups[key].sum(min_count=1)
-            columns.append(key)
-    if detail["Volumen (m³)"].isna().any():
-        summary["Filas sin volumen"] = groups["Volumen (m³)"].agg(lambda values: values.isna().sum())
-        columns.append("Filas sin volumen")
+        return pd.DataFrame(columns=[*keys, "Elementos"])
+    groups = detail.groupby(keys, sort=True, dropna=False)
+    summary = groups[["Elementos"]].sum()
+    columns = [*keys, "Elementos"]
+    for key, missing_label in [
+        ("Volumen (m³)", "Filas sin volumen"),
+        ("Área (m²)", "Filas sin área"),
+        ("Longitud (m)", "Filas sin longitud"),
+        ("Masa (kg)", "Filas sin masa"),
+    ]:
+        if key not in detail or detail[key].isna().all():
+            continue
+        summary[key] = groups[key].sum(min_count=1)
+        columns.append(key)
+        if missing_label and detail[key].isna().any():
+            summary[missing_label] = groups[key].agg(lambda values: values.isna().sum())
+            columns.append(missing_label)
+            if key == "Área (m²)":
+                # No presentar como completo un total de área con datos parciales.
+                summary.loc[summary[missing_label] > 0, key] = math.nan
     return summary.reset_index()[columns]

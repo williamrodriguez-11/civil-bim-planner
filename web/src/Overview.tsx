@@ -1,5 +1,5 @@
 import { reviewRow } from "./review";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -113,6 +113,165 @@ function LevelCategoryFix({
         )}
       </div>
       {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+const SERIES = 6;
+// Internal id of the folded segment; a level name can never contain «\u0000».
+const REST = "\u0000otros";
+const pct = (n: number) =>
+  n.toLocaleString("es-CO", { maximumFractionDigits: 1 }) + " %";
+
+/** One whole split into parts: a tall segmented bar plus a legend list.
+ * Colors follow each name (natural order), never its rank. */
+function Shares({
+  parts,
+  unit,
+  names,
+  unmeasured,
+}: {
+  /** complete: every row of the group has the measurement. */
+  parts: { name: string; value: number | null; label: string; complete: boolean }[];
+  unit: string;
+  names: string[];
+  /** Groups with no row measured at all. */
+  unmeasured: number;
+}) {
+  const [active, setActive] = useState<string | null>(null),
+    [grown, setGrown] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const measured = parts.filter((p) => p.value !== null && p.value > 0);
+  const total = measured.reduce((n, p) => n + (p.value ?? 0), 0);
+  const order = [...names].sort((a, b) =>
+    a.localeCompare(b, "es", { numeric: true }),
+  );
+  // More than six parts: the five largest keep a color, the rest fold into «Otros».
+  const shown = measured.length > SERIES ? measured.slice(0, SERIES - 1) : measured;
+  const rest = measured.slice(shown.length);
+  const colored = order.filter((n) => shown.some((p) => p.name === n));
+  const color = (name: string) =>
+    shown.some((p) => p.name === name)
+      ? `var(--series-${colored.indexOf(name) + 1})`
+      : "var(--series-other)";
+  const restValue = rest.reduce((n, p) => n + (p.value ?? 0), 0);
+  const blocks = [
+    ...shown.map((p) => ({ key: p.name, name: p.name, value: p.value ?? 0 })),
+    ...(rest.length
+      ? [{ key: REST, name: `Otros (${rest.length})`, value: restValue }]
+      : []),
+  ];
+  // Groups with missing rows: their sum is partial (or, for areas, unknown).
+  const incomplete = parts.filter((p) => !p.complete).length + unmeasured;
+  const groupCount = parts.length + unmeasured;
+  const focus = blocks.find((b) => b.key === active);
+  const summary = blocks
+    .map((b) => `${b.name}: ${pct((b.value / total) * 100)}`)
+    .join(", ");
+  return (
+    <div className="shares" onMouseLeave={() => setActive(null)}>
+      <div className="shares-head">
+        <span>{incomplete ? "Total medido" : "Total"}</span>
+        <strong>
+          {fmt(total)} {unit}
+        </strong>
+        <small aria-live="polite">
+          {focus
+            ? `${focus.name} · ${fmt(focus.value)} ${unit} · ${pct(
+                (focus.value / total) * 100,
+              )}`
+            : "Pasa el cursor por el gráfico o la lista"}
+        </small>
+        {!!incomplete && (
+          <p className="notice">
+            {incomplete} de {groupCount} grupos no tienen la medición completa.
+            El total y los porcentajes son solo sobre lo medido. Si mezclas
+            elementos que no usan esta medida, elige una categoría arriba.
+          </p>
+        )}
+      </div>
+      {!total && (
+        <p className="notice">
+          {parts.some((p) => p.value === 0)
+            ? "Las cantidades medidas son cero: no hay reparto que dibujar."
+            : "Ningún grupo tiene una medición completa para repartir."}
+        </p>
+      )}
+      <div
+        className="shares-bar"
+        role="img"
+        hidden={!total}
+        aria-label={"Reparto: " + summary}
+      >
+        {blocks.map((b) => {
+          const share = (b.value / total) * 100;
+          return (
+            <span
+              key={b.key}
+              tabIndex={0}
+              className={active ? (active === b.key ? "on" : "off") : ""}
+              style={{
+                // Normalized so the parts always fill the whole bar.
+                flexGrow: grown ? b.value / total : 0,
+                background:
+                  b.key === REST ? "var(--series-other)" : color(b.key),
+              }}
+              title={`${b.name} · ${fmt(b.value)} ${unit} · ${pct(share)}`}
+              onMouseEnter={() => setActive(b.key)}
+              onFocus={() => setActive(b.key)}
+              onBlur={() => setActive(null)}
+            >
+              {share >= 9 && (
+                <b
+                  style={
+                    colored.indexOf(b.key) === 5
+                      ? { color: "var(--series-6-ink)" }
+                      : undefined
+                  }
+                >
+                  {pct(Math.round(share))}
+                </b>
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <ul className="shares-list">
+        {parts.map((p) => {
+          const key = shown.some((s) => s.name === p.name)
+            ? p.name
+            : p.value
+              ? REST
+              : null;
+          // A measured zero is 0 %; only a missing measurement shows «—».
+          const share =
+            p.value === null ? null : total ? (p.value / total) * 100 : 0;
+          return (
+            <li
+              key={p.name}
+              className={
+                active && key ? (active === key ? "on" : "off") : ""
+              }
+              onMouseEnter={() => key && setActive(key)}
+            >
+              <i
+                style={{
+                  background: key
+                    ? key === REST
+                      ? "var(--series-other)"
+                      : color(p.name)
+                    : "transparent",
+                }}
+              />
+              <span>{p.name}</span>
+              <b>{p.label}</b>
+              <small>{share === null ? "—" : pct(share)}</small>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -389,28 +548,17 @@ export function Overview({
               }))}
             />
           ) : sums.length && chartView === "Proporciones" ? (
-            <div className="proportions">
-              {sums.map(({ name, measure }) => {
-                const total = sums.reduce(
-                  (n, s) => n + (measurementTotal(s.measure) ?? 0),
-                  0,
-                );
-                const percent = total
-                  ? ((measurementTotal(measure) ?? 0) / total) * 100
-                  : 0;
-                return (
-                  <div key={name}>
-                    <label>
-                      {name}
-                      <strong>
-                        {fmt(percent)} % · {totalLabel(measure)}
-                      </strong>
-                    </label>
-                    <progress max={100} value={percent} />
-                  </div>
-                );
-              })}
-            </div>
+            <Shares
+              parts={sums.map(({ name, measure }) => ({
+                name,
+                value: measurementTotal(measure),
+                label: totalLabel(measure),
+                complete: measure.measuredRows === measure.sourceRows,
+              }))}
+              unit={unitLabel(selected.unit)}
+              names={Array.from(groups.keys())}
+              unmeasured={groups.size - sums.length}
+            />
           ) : sums.length ? (
             <div className="bars">
               {selected.measuredRows < selected.sourceRows && (

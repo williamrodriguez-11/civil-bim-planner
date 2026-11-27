@@ -1298,3 +1298,149 @@ button.danger:hover {
   flex: 1 1 180px;
   max-width: 260px;
 }
+/* Proportions: categorical slots validated on #fff and on the dark surface. */
+:root {
+  --series-1: #257de0;
+  --series-2: #f47230;
+  --series-3: #00b894;
+  --series-4: #f2a600;
+  --series-5: #ee7fac;
+  --series-6: #008a17;
+  --series-other: #9aa7a0;
+  /* Label ink on each fill, >= 4.5:1. */
+  --series-ink: #0b0b0b;
+  --series-6-ink: #ffffff;
+}
+:root[data-theme="dark"] {
+  --series-1: #338ced;
+  --series-2: #e76624;
+  --series-3: #00a888;
+  --series-4: #d28e05;
+  --series-5: #e24d8b;
+  --series-6: #0aac23;
+  --series-other: #8a9a92;
+  --series-6-ink: #0b0b0b;
+}
+.shares {
+  display: grid;
+  gap: 16px;
+}
+.shares-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.shares-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.shares-head strong {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.shares-head .notice {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+}
+.shares-head small {
+  flex-basis: 100%;
+  min-height: 1.5em;
+  color: var(--muted);
+}
+.shares-bar {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+}
+.shares-bar span {
+  /* No padding here: a segment's width is only its share. */
+  flex: 0 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 4px;
+  cursor: default;
+  transition:
+    flex-grow 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.2s,
+    transform 0.2s;
+}
+.shares-bar span:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.shares-bar span.on {
+  transform: scaleY(1.15);
+}
+.shares-bar span.off,
+.shares-list li.off {
+  opacity: 0.35;
+}
+.shares-bar b {
+  padding-left: 8px;
+  color: var(--series-ink);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.shares-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.shares-list li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto 4.5em;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  transition: opacity 0.2s;
+}
+.shares-list i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.shares-list span {
+  overflow-wrap: anywhere;
+}
+.shares-list small {
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.trash-section {
+  margin-bottom: 18px;
+}
+.trash-section .section-title .right {
+  margin-left: auto;
+}
+.trash-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.trash-row > div {
+  flex: 1 1 220px;
+  display: grid;
+}
+.trash-row small {
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .shares-bar span,
+  .shares-list li {
+    transition: none;
+  }
+}
+.shares-bar[hidden] {
+  display: none;
+}

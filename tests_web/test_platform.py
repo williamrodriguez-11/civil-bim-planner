@@ -156,6 +156,21 @@ class Workflow(unittest.TestCase):
         ).content
         book = load_workbook(BytesIO(content), data_only=True)
         self.assertEqual(book.sheetnames, ["Detalle"])
+        # Only measured quantities get a column: no empty «Área (m²)» or
+        # «Filas sin área» when no table measured an area.
+        self.assertNotIn("Área (m²)", next(book["Detalle"].values))
+        full = self.client.post(
+            self.base + "/reports",
+            headers=self.headers(),
+            json={"sections": ["Resumen por nivel"], "tables": ids},
+        )
+        self.assertEqual(full.status_code, 201, full.text)
+        summary = load_workbook(
+            BytesIO(self.client.get(self.base + "/reports/" + str(full.json()["id"])).content)
+        )["Resumen por nivel"]
+        self.assertEqual(
+            list(next(summary.values)), ["Categoría", "Nivel", "Elementos", "Volumen (m³)"]
+        )
         self.assertEqual(book["Detalle"].max_row, 2)
         self.assertIn(2, list(book["Detalle"].values)[1])
         invalid = self.client.post(
@@ -568,7 +583,12 @@ class Workflow(unittest.TestCase):
                 ).content
             )
         )
-        self.assertIsNone(workbook["Resumen por nivel"]["D2"].value)
+        summary = workbook["Resumen por nivel"]
+        # Without any measured volume there is no volume column.
+        self.assertEqual(
+            list(next(summary.values)), ["Categoría", "Nivel", "Elementos", "Masa (kg)"]
+        )
+        self.assertAlmostEqual(summary["D2"].value / 1e-16, 1)
         other = self.load("otro.csv", b"N;ID;g\nPB;X1;2")
         self.assertEqual(self.mapping(other, mapping).status_code, 422)
 

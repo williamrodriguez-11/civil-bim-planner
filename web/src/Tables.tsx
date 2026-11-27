@@ -270,20 +270,24 @@ function Importer({
                   </select>
                 </label>
                 <label>
-                  Codificación
+                  <span title="Cómo están guardadas las letras del archivo. Cámbiala solo si ves tildes o la ñ mal escritas.">
+                    Codificación
+                  </span>
                   <select
                     value={applied.encoding}
                     onChange={(e) => change({ encoding: e.target.value })}
                   >
                     {[
-                      "auto",
-                      "utf-8-sig",
-                      "utf-16",
-                      "utf-16-le",
-                      "utf-16-be",
-                      "cp1252",
-                    ].map((v) => (
-                      <option key={v}>{v}</option>
+                      ["auto", "Automática (recomendada)"],
+                      ["utf-8-sig", "UTF-8 · la más común"],
+                      ["utf-16", "UTF-16 · texto «Unicode» de Windows"],
+                      ["cp1252", "Windows · ANSI, archivos antiguos"],
+                      ["utf-16-le", "UTF-16 LE · avanzado"],
+                      ["utf-16-be", "UTF-16 BE · avanzado"],
+                    ].map(([v, n]) => (
+                      <option key={v} value={v}>
+                        {n}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -858,20 +862,19 @@ export function Tables({
   state,
   mutate,
   viewQuantities,
+  openTrash,
 }: {
   state: State;
   mutate: Mutation;
   viewQuantities: (tab: QuantityTab, tableId: number) => void;
+  openTrash: () => void;
 }) {
   const [selectedId, setId] = useState<number>(state.tables[0]?.id ?? 0),
     [loaded, setLoaded] = useState<{ id: number; table: Table } | null>(null),
     [error, setError] = useState("");
   type TableRef = Pick<Source, "id" | "name" | "sheet">;
   const [dialog, setDialog] = useState<
-      | { kind: "delete"; target: TableRef }
-      | { kind: "trash" }
-      | { kind: "purge"; targets: TableRef[] }
-      | null
+      { kind: "delete"; target: TableRef } | null
     >(null),
     [pending, setPending] = useState(false),
     [actionError, setActionError] = useState(""),
@@ -915,32 +918,6 @@ export function Tables({
       setPending(false);
     }
   }
-  async function purge(targets: TableRef[]) {
-    setPending(true);
-    setActionError("");
-    setNotice("");
-    let done = 0;
-    try {
-      for (const target of targets) {
-        await mutate("/tables/" + target.id + "/permanent", {}, "DELETE");
-        done++;
-      }
-      setDialog(null);
-      setNotice(
-        targets.length === 1
-          ? `Se eliminó definitivamente «${label(targets[0])}».`
-          : `Se eliminaron definitivamente ${targets.length} tablas.`,
-      );
-    } catch (e) {
-      setActionError(
-        (done ? `Se eliminaron ${done} de ${targets.length}. ` : "") +
-          cleanError(e),
-      );
-      setDialog({ kind: "trash" });
-    } finally {
-      setPending(false);
-    }
-  }
   useEffect(() => {
     setLoaded(null);
     setError("");
@@ -966,7 +943,7 @@ export function Tables({
           <h2>Biblioteca de tablas</h2>
         </div>
         {!!state.trashed_tables.length && (
-          <button onClick={() => setDialog({ kind: "trash" })}>
+          <button onClick={openTrash}>
             <Trash2 size={15} /> Papelera de tablas (
             {state.trashed_tables.length})
           </button>
@@ -1053,15 +1030,6 @@ export function Tables({
             {error && <p className="error">{error}</p>}
             {table ? (
               <>
-                <div className="chips">
-                  {table.fields.map((f) => (
-                    <span key={f.name}>
-                      {f.name} · {f.kind}
-                      {f.unit ? " · " + f.unit : ""}
-                      {f.empty ? " · " + f.empty + " vacíos" : ""}
-                    </span>
-                  ))}
-                </div>
                 <details>
                   <summary>Revisar filas de origen</summary>
                   <Grid
@@ -1091,13 +1059,7 @@ export function Tables({
       </section>
       {dialog && (
         <Modal
-          title={
-            dialog.kind === "trash"
-              ? "Papelera de tablas"
-              : dialog.kind === "purge"
-                ? "Eliminar definitivamente"
-                : "Borrar tabla"
-          }
+          title="Borrar tabla"
           close={closeDialog}
         >
           {dialog.kind === "delete" ? (
@@ -1120,85 +1082,7 @@ export function Tables({
                 </button>
               </div>
             </>
-          ) : dialog.kind === "purge" ? (
-            <>
-              <p>
-                {dialog.targets.length === 1 ? (
-                  <>
-                    ¿Eliminar <strong>«{label(dialog.targets[0])}»</strong> para
-                    siempre?
-                  </>
-                ) : (
-                  <>
-                    ¿Eliminar para siempre las {dialog.targets.length} tablas de
-                    la papelera?
-                  </>
-                )}{" "}
-                Se borrarán el archivo original, su configuración y sus
-                cantidades. Los reportes ya generados se conservan.{" "}
-                <strong>No se puede deshacer.</strong>
-              </p>
-              <div className="actions">
-                <button
-                  autoFocus
-                  disabled={pending}
-                  onClick={() => setDialog({ kind: "trash" })}
-                >
-                  Cancelar
-                </button>
-                <button
-                  className="danger"
-                  disabled={pending}
-                  onClick={() => purge(dialog.targets)}
-                >
-                  Eliminar definitivamente
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              {state.trashed_tables.map((s) => (
-                <div key={s.id} className="report">
-                  <span>{label(s)}</span>
-                  <button
-                    disabled={pending}
-                    onClick={() => changeTrash(s, true)}
-                  >
-                    <Undo2 size={15} /> Restaurar
-                  </button>
-                  <button
-                    disabled={pending}
-                    aria-label={`Eliminar definitivamente ${label(s)}`}
-                    title="Eliminar definitivamente"
-                    onClick={() => {
-                      setActionError("");
-                      setDialog({ kind: "purge", targets: [s] });
-                    }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
-              {state.trashed_tables.length ? (
-                <div className="actions">
-                  <button
-                    disabled={pending}
-                    onClick={() => {
-                      setActionError("");
-                      setDialog({
-                        kind: "purge",
-                        targets: state.trashed_tables,
-                      });
-                    }}
-                  >
-                    <Trash2 size={15} /> Vaciar papelera de tablas
-                  </button>
-                </div>
-              ) : (
-                <Empty title="La papelera de tablas está vacía" />
-              )}
-            </>
-          )}
+          ) : null}
           {actionError && (
             <p className="error" role="alert">
               {actionError}
