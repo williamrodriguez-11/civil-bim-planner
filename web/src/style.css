@@ -2187,7 +2187,7 @@ button.danger:hover {
   }
   /* Below the grid there is room for two columns of blocks. */
   .details-columns {
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   }
 }
 @media (max-width: 760px) {

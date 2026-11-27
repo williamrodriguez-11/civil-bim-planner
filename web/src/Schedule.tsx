@@ -100,6 +100,10 @@ const longDate = (s: string) =>
   label(s, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const days = (n: number) => `${n} ${Math.abs(n) === 1 ? "día" : "días"}`;
 const today = () => new Date().toISOString().slice(0, 10);
+const variance = (n: number) =>
+  n
+    ? `${n > 0 ? "atraso" : "adelanto"} de ${days(Math.abs(n))}`
+    : "sin cambios";
 
 /** Only named activities reach the server; links to unnamed rows drop. */
 function cleaned(plan: Plan): Plan {
@@ -1572,18 +1576,15 @@ function TaskDetails({
               </dl>
               <p className="muted">
                 {row.critical
-                  ? "Si se retrasa, se retrasa la entrega de la obra."
-                  : `Puede retrasarse hasta ${days(row.slack)} laborables sin mover la entrega de la obra.`}
+                  ? "Si se retrasa, se mueve el final del cronograma o se incumple una fecha obligatoria."
+                  : `Puede retrasarse hasta ${days(row.slack)} laborables sin mover el final del cronograma.`}
               </p>
               {row.baseline && (
                 <p className="muted">
                   Línea base: {shortDate(row.baseline.start)} a{" "}
-                  {shortDate(row.baseline.finish)}
-                  {row.baseline.finish_variance
-                    ? ` · ${row.baseline.finish_variance > 0 ? "atraso" : "adelanto"} de ${days(
-                        Math.abs(row.baseline.finish_variance),
-                      )}`
-                    : " · sin cambios"}
+                  {shortDate(row.baseline.finish)}. Inicio:{" "}
+                  {variance(row.baseline.start_variance)}. Fin:{" "}
+                  {variance(row.baseline.finish_variance)}.
                 </p>
               )}
             </section>
@@ -1605,9 +1606,7 @@ function TaskDetails({
               Actividades que tienen que avanzar antes que esta.
             </p>
             {task.links.length === 0 && (
-              <p className="details-empty">
-                No depende de ninguna: empieza con el proyecto.
-              </p>
+              <p className="details-empty">No depende de ninguna actividad.</p>
             )}
             {task.links.map((l, i) => (
               <div key={l.predecessor} className="details-link">
