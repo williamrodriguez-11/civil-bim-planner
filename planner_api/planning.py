@@ -254,10 +254,15 @@ def schedule(plan: Plan, sources, today=None):
             w = max(w, 0)  # never before the project start
             finish_based = link.relation in ("FS", "FF")
             after = base[0] + timedelta(days=base[1])
+            point = at(w, finish_based)
+            if link.lag >= 0 and point < base:
+                # The predecessor ends on a day this calendar does not work:
+                # never place the activity before it.
+                point = c.start_point(w)
             candidates.append(
                 (
                     w,
-                    at(w, finish_based),
+                    point,
                     {
                         "type": "link",
                         "predecessor": p,
@@ -339,11 +344,13 @@ def schedule(plan: Plan, sources, today=None):
     for t in sorted(plan.tasks, key=lambda t: tuple(map(int, t.wbs.split(".")))):
         i, c, d = t.id, cal[t.id], durations[t.id]
         first, last = start_pt[i][0], finish_pt[i][0]
-        elapsed = c.work((cut, 1))
-        if d:
-            planned = round(100 * max(0, min(d, elapsed - start_w[i])) / d, 1)
+        # Dates outside the activity need no calendar (and no horizon).
+        if cut >= last:
+            planned = 100.0
+        elif cut < first:
+            planned = 0.0
         else:
-            planned = 100.0 if cut >= first else 0.0
+            planned = round(100 * max(0, min(d, c.work((cut, 1)) - start_w[i])) / d, 1)
         slack = late_start[i] - start_w[i]
         row = {
             **t.model_dump(mode="json"),
@@ -357,8 +364,16 @@ def schedule(plan: Plan, sources, today=None):
             "slack": slack,
             "critical": slack <= 0,
             "planned": planned,
-            "late_start": c.start_point(late_start[i])[0].isoformat(),
-            "late_finish": (c.end_point(late_finish[i]) if d else c.start_point(late_start[i]))[0].isoformat(),
+            # Without slack the latest dates are the scheduled ones (this keeps
+            # a milestone fixed at 17:00 on its own day).
+            "late_start": (
+                first if slack <= 0 else c.start_point(late_start[i])[0]
+            ).isoformat(),
+            "late_finish": (
+                last
+                if slack <= 0
+                else (c.end_point(late_finish[i]) if d else c.start_point(late_start[i]))[0]
+            ).isoformat(),
             "driver": driver[i],
             # Why the start moved: non-working days between the date the
             # driver allows and the actual start.

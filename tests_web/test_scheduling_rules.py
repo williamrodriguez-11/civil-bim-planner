@@ -261,6 +261,29 @@ class EdgeCases(unittest.TestCase):
         )
 
 
+class MoreEdgeCases(unittest.TestCase):
+    def test_milestone_never_precedes_a_weekend_predecessor(self):
+        rows = run(
+            plan(
+                task(1, "1", 1, earliest="2026-11-07", calendar="7 días"),
+                task(2, "2", 0, (1, "FS", 0)),
+                calendars={"7 días": {"weekdays": list(range(7))}},
+            )
+        )
+        self.assertEqual(rows[2]["start"], "2026-11-09")
+
+    def test_far_tracking_date_needs_no_calendar(self):
+        p = Plan.model_validate(
+            {"start": "1900-01-01", "tasks": [task(1, "1", 1)], "status_date": "2026-11-02"}
+        )
+        self.assertEqual(schedule(p, {})[0]["planned"], 100.0)
+
+    def test_fixed_milestone_reports_its_own_late_dates(self):
+        rows = run(plan(task(1, "1", 0, fixed_finish="2026-11-06")))
+        self.assertEqual(rows[1]["start"], "2026-11-06")
+        self.assertEqual((rows[1]["late_start"], rows[1]["late_finish"]), ("2026-11-06",) * 2)
+
+
 class Export(unittest.TestCase):
     def test_xml_keeps_milestones_calendars_baseline_and_phases(self):
         from xml.etree import ElementTree as ET

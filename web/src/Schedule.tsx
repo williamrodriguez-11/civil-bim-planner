@@ -589,7 +589,7 @@ export function Schedule({
     width < 760 ? Math.max(320, width - 40) : width < 1250 ? 580 : 640;
   const px =
     scale === "fit"
-      ? Math.max(1.2, (width - tableWidth - 4) / span)
+      ? Math.max(0.05, (width - tableWidth - 4) / span)
       : SCALES[scale];
   const timelineWidth = Math.ceil(span * px);
   const x = (date: string, end = false) =>
@@ -608,7 +608,11 @@ export function Schedule({
       if (scale === "month" || px < 4) {
         if ((dt.getUTCMonth() === 0 && dt.getUTCDate() === 1) || d === origin)
           top.push({ left, text: String(dt.getUTCFullYear()) });
-        if (first) bottom.push({ left, text: label(iso, { month: "short" }) });
+        // Fewer month labels when months are narrow.
+        const month = dt.getUTCMonth();
+        const every = 30 * px >= 26 ? 1 : 90 * px >= 26 ? 3 : 0;
+        if (first && every && month % every === 0)
+          bottom.push({ left, text: label(iso, { month: "short" }) });
       } else {
         // The partial month at the left edge is labelled only if it is wide.
         if (dt.getUTCDate() === 1 || (d === origin && dt.getUTCDate() <= 20))
@@ -673,9 +677,13 @@ export function Schedule({
           : `M${x1} ${y1} H${x1 + 6} V${y2 + (y2 > y1 ? -ROW / 2 + 4 : ROW / 2 - 4)} H${
               toEnd ? x2 + 10 : x2 - 10
             } V${y2} H${toEnd ? x2 + 1 : x2 - 1}`;
+      // Critical only when this link is the one driving the successor.
+      const driving =
+        to.driver?.type === "link" &&
+        to.driver.predecessor === link.predecessor;
       arrows.push({
         d,
-        critical: !!(from.critical && to.critical),
+        critical: !!(from.critical && to.critical && driving),
         key: `${link.predecessor}-${t.id}`,
       });
     }
@@ -701,13 +709,14 @@ export function Schedule({
           Inicio del proyecto
           <input
             type="date"
+            disabled={saving}
             value={draft.start}
             onChange={(e) =>
               e.target.value && setDraft({ ...draft, start: e.target.value })
             }
           />
         </label>
-        <button onClick={() => setCalendarOpen(true)}>
+        <button disabled={saving} onClick={() => setCalendarOpen(true)}>
           <CalendarDays size={15} /> Calendario y seguimiento
         </button>
         <div className="planner-save">

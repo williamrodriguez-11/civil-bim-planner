@@ -47,13 +47,29 @@ export function buildTree(plan: Plan): Node[] {
     if (list) list.push({ kind: "task", id: t.id });
     else root.push({ key: t.wbs, node: { kind: "task", id: t.id } });
   }
-  // Phases created before their first activity.
-  for (const [code, name] of Object.entries(plan.groups))
-    if (!code.includes(".") && !phases.has(code))
-      root.push({
-        key: code,
-        node: { kind: "phase", code, name, children: [] },
-      });
+  // Phases that are empty for now (created before their first activity,
+  // or emptied by an edit), at any depth, in code order.
+  const wbsOf = new Map(tasks.map((t) => [t.id, t.wbs]));
+  const keyOf = (n: Node) =>
+    n.kind === "phase" ? n.code : (wbsOf.get(n.id) ?? "");
+  const touched = new Set<Node[]>();
+  for (const code of Object.keys(plan.groups).sort(compareCodes)) {
+    if (phases.has(code)) continue;
+    const phase = {
+      kind: "phase" as const,
+      code,
+      name: plan.groups[code],
+      children: [],
+    };
+    phases.set(code, phase);
+    const parent = phases.get(code.split(".").slice(0, -1).join("."));
+    if (parent) {
+      parent.children.push(phase);
+      touched.add(parent.children);
+    } else root.push({ key: code, node: phase });
+  }
+  for (const list of touched)
+    list.sort((a, b) => compareCodes(keyOf(a), keyOf(b)));
   return root
     .sort((a, b) => compareCodes(a.key, b.key))
     .map((entry) => entry.node);
