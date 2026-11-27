@@ -338,8 +338,10 @@ export function Overview({
         return grouping === "Nivel"
           ? compareLevels(a.name, b.name)
           : a.name.localeCompare(b.name, "es", { numeric: true });
-      const x = measurementTotal(a.measure) ?? -1,
-        y = measurementTotal(b.measure) ?? -1;
+      const x = measurementTotal(a.measure),
+        y = measurementTotal(b.measure);
+      // An unknown total is not the smallest quantity: it goes last.
+      if (x === null || y === null) return x === null ? (y === null ? 0 : 1) : -1;
       return order === "desc" ? y - x : x - y;
     });
   const peak = sums.reduce(
@@ -567,7 +569,8 @@ export function Overview({
           </div>
           {sums.length && chartView === "Tabla" ? (
             <Grid
-              key={order + grouping}
+              sortReset={order + grouping}
+              summable={["Cantidad"]}
               rows={sums.map(({ name, measure }) => ({
                 [grouping]: name,
                 Cantidad: measurementTotal(measure),
@@ -942,6 +945,7 @@ export function Quantities({
             key={tableId + tab + group + JSON.stringify(populatedColumns)}
             rows={displayedRows}
             columns={populatedColumns}
+            summable={["Elementos", "Volumen (m³)", "Área (m²)", "Longitud (m)", "Masa (kg)"]}
           />
         </>
       )}

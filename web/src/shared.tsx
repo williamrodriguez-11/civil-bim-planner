@@ -62,10 +62,16 @@ export function Grid({
   rows,
   columns,
   rowAction,
+  summable = [],
+  sortReset,
 }: {
   rows: Row[];
   columns?: string[];
   rowAction?: (row: Row) => React.ReactNode;
+  /** Columns that are additive quantities; groups only count the others. */
+  summable?: string[];
+  /** Changing it drops a header sort so the caller's order applies. */
+  sortReset?: string;
 }) {
   const keys = useMemo(
     () => columns ?? Array.from(new Set(rows.flatMap((r) => Object.keys(r)))),
@@ -79,6 +85,9 @@ export function Grid({
     [page, setPage] = useState(0),
     [settings, setSettings] = useState(false),
     [group, setGroup] = useState("");
+  useEffect(() => {
+    setSort("");
+  }, [sortReset]);
   const visible = selection ?? keys;
   // Numeric columns are summed inside groups; only text columns can group.
   const numeric = useMemo(
@@ -118,12 +127,12 @@ export function Grid({
     });
   }
   const activeGroup = groupable.includes(group) ? group : "";
-  // Row numbers and identifiers are not quantities: never summed.
   const sums = [...numeric].filter(
-    (k) => visible.includes(k) && !["#", "Fila origen", "ID"].includes(k),
+    (k) => visible.includes(k) && summable.includes(k),
   );
-  // The count must not collide with a column of the file called «Filas».
-  const countKey = keys.includes("Filas") ? "N.º de filas" : "Filas";
+  // The count must not collide with any column of the file.
+  let countKey = "Filas";
+  for (let n = 2; keys.includes(countKey); n++) countKey = `Filas (${n})`;
   const groups = new Map<string, { row: Row; categories: Set<string> }>();
   if (activeGroup)
     for (const r of view) {
@@ -228,8 +237,8 @@ export function Grid({
                 ))}
               </select>
               <small>
-                Junta las filas con el mismo valor, las cuenta y suma sus
-                cantidades.
+                Junta las filas con el mismo valor y las cuenta
+                {summable.length ? "; también suma sus cantidades" : ""}.
               </small>
             </label>
           )}
