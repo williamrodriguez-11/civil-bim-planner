@@ -6,7 +6,6 @@ import {
   DirectionalLight,
   EdgesGeometry,
   Float32BufferAttribute,
-  GridHelper,
   HemisphereLight,
   LineBasicMaterial,
   LineSegments,
@@ -16,7 +15,6 @@ import {
   Scene,
   Vector3,
   WebGLRenderer,
-  type Material,
 } from "three";
 import { build, height, TIMING, type Piece } from "./structure";
 
@@ -34,7 +32,8 @@ const ease = (p: number) => 1 - Math.pow(1 - p, 3);
 const clamp = (v: number) => Math.min(1, Math.max(0, v));
 
 /** Isometric WebGL scene: footings, columns, beams and slabs rise in order;
- * the finished frame sways gently and follows the pointer. Loaded on demand
+ * the finished frame sways gently until the visitor drags it to look from
+ * any side, above or below. Loaded on demand
  * by SceneSlot. */
 export default function LoginScene({
   status,
@@ -80,15 +79,14 @@ export default function LoginScene({
     renderer.domElement.addEventListener("webglcontextlost", lost);
 
     const scene = new Scene();
-    scene.add(new HemisphereLight(0xeef7ee, 0x0d1f19, 1.3));
+    scene.add(new HemisphereLight(0xeef7ee, 0x6f857a, 1.3));
+    // Soft light from below, so the underside reads when viewed from beneath.
+    const under = new DirectionalLight(0xdfe9e3, 0.9);
+    under.position.set(-6, -14, -4);
+    scene.add(under);
     const sun = new DirectionalLight(0xffffff, 1.5);
     sun.position.set(9, 16, 5);
     scene.add(sun);
-    const grid = new GridHelper(34, 34, 0x2f5a4b, 0x1f3e34);
-    grid.position.y = -0.02;
-    scene.add(grid);
-    keep(grid.geometry);
-    keep(grid.material as Material);
 
     const { pieces, end, xs, zs } = build();
 
@@ -159,7 +157,8 @@ export default function LoginScene({
 
     // Isometric orthographic camera that fits the building.
     const camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-    const target = new Vector3(0, height * 0.42, 0);
+    // Orbit around the middle of the building.
+    const target = new Vector3(0, height / 2, 0);
     const radius = 40;
     const place = (yaw: number, pitch: number) => {
       const angle = Math.PI / 4 + yaw;
@@ -173,28 +172,18 @@ export default function LoginScene({
     };
     const last = (list: number[]) => list[list.length - 1];
     const corners: Vector3[] = [];
-    for (const x of [xs[0] - 1.6, last(xs) + 1.6])
-      for (const z of [zs[0] - 1.6, last(zs) + 1.6])
+    for (const x of [xs[0] - 0.9, last(xs) + 0.9])
+      for (const z of [zs[0] - 0.9, last(zs) + 0.9])
         for (const y of [0, height + 0.8]) corners.push(new Vector3(x, y, z));
     const fit = () => {
       const w = root.clientWidth || 1,
         h = root.clientHeight || 1;
       renderer.setSize(w, h, false);
-      // Fit the widest view the pointer can reach, so nothing is cut off.
-      let half = 0;
-      let halfY = 0;
-      for (const yaw of [-0.4, 0, 0.4])
-        for (const pitch of [-0.12, 0.12]) {
-          place(yaw, pitch);
-          camera.updateMatrixWorld();
-          for (const c of corners) {
-            const v = c.clone().applyMatrix4(camera.matrixWorldInverse);
-            half = Math.max(half, Math.abs(v.x));
-            halfY = Math.max(halfY, Math.abs(v.y));
-          }
-        }
+      // The visitor can turn the model to any side, so fit its bounding
+      // sphere: nothing is cut off from any angle.
+      const reach = Math.max(...corners.map((c) => c.distanceTo(target)));
       const aspect = w / h;
-      const size = Math.max(halfY, half / aspect) * (1.04 * SUCCESS_ZOOM);
+      const size = Math.max(reach, reach / aspect) * 1.02 * SUCCESS_ZOOM;
       camera.left = -size * aspect;
       camera.right = size * aspect;
       camera.top = size;
@@ -205,23 +194,49 @@ export default function LoginScene({
     const resize = new ResizeObserver(fit);
     resize.observe(root);
 
-    // The structure turns toward the pointer while it is over the scene.
-    const aim = { yaw: 0, pitch: 0, active: false };
+    // Click (or touch) and drag to orbit: sideways all around, and from far
+    // above to underneath. The chosen view stays; double-click resets it.
+    const LOW = -1.4 - ELEVATION,
+      HIGH = 1.4 - ELEVATION;
+    const aim = { yaw: 0, pitch: 0, user: false };
     const view = { yaw: 0, pitch: 0 };
+    let drag: { id: number; x: number; y: number } | null = null;
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      root.setPointerCapture(e.pointerId);
+      root.classList.add("is-dragging");
+      if (!aim.user) {
+        // Continue from the current sway instead of jumping.
+        aim.yaw = view.yaw;
+        aim.pitch = view.pitch;
+        aim.user = true;
+      }
+    };
     const move = (e: PointerEvent) => {
-      const box = root.getBoundingClientRect();
-      const nx = (e.clientX - box.left) / box.width - 0.5;
-      const ny = (e.clientY - box.top) / box.height - 0.5;
-      aim.yaw = Math.max(-0.4, Math.min(0.4, nx * 0.8));
-      aim.pitch = Math.max(-0.12, Math.min(0.12, -ny * 0.24));
-      aim.active = true;
+      if (!drag || e.pointerId !== drag.id) return;
+      aim.yaw += (e.clientX - drag.x) * 0.01;
+      aim.pitch = Math.max(
+        LOW,
+        Math.min(HIGH, aim.pitch + (e.clientY - drag.y) * 0.01),
+      );
+      drag.x = e.clientX;
+      drag.y = e.clientY;
     };
-    const leave = () => {
-      aim.active = false;
+    const up = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      root.classList.remove("is-dragging");
     };
+    const reset = () => {
+      aim.yaw = 0;
+      aim.pitch = 0;
+    };
+    root.addEventListener("pointerdown", down);
     root.addEventListener("pointermove", move);
-    root.addEventListener("pointerleave", leave);
-    root.addEventListener("pointercancel", leave);
+    root.addEventListener("pointerup", up);
+    root.addEventListener("pointercancel", up);
+    root.addEventListener("dblclick", reset);
 
     let elapsed = 0,
       previous = performance.now(),
@@ -276,13 +291,13 @@ export default function LoginScene({
         outline.opacity = 0.4 + 0.5 * glow;
       }
 
-      // Follow the pointer; otherwise sway slowly once the frame is complete.
+      // The visitor's view once they drag; until then a slow sway.
       const sway =
         Math.sin(Math.max(0, t - end) * 0.22) *
         0.16 *
         ease(clamp((t - end) / 2.5));
-      view.yaw += ((aim.active ? aim.yaw : sway) - view.yaw) * 0.08;
-      view.pitch += ((aim.active ? aim.pitch : 0) - view.pitch) * 0.08;
+      view.yaw += ((aim.user ? aim.yaw : sway) - view.yaw) * 0.2;
+      view.pitch += ((aim.user ? aim.pitch : 0) - view.pitch) * 0.2;
       place(view.yaw, view.pitch);
       camera.zoom =
         status === "success"
@@ -317,9 +332,11 @@ export default function LoginScene({
       resize.disconnect();
       onScreen.disconnect();
       document.removeEventListener("visibilitychange", onHidden);
+      root.removeEventListener("pointerdown", down);
       root.removeEventListener("pointermove", move);
-      root.removeEventListener("pointerleave", leave);
-      root.removeEventListener("pointercancel", leave);
+      root.removeEventListener("pointerup", up);
+      root.removeEventListener("pointercancel", up);
+      root.removeEventListener("dblclick", reset);
       renderer.domElement.removeEventListener("webglcontextlost", lost);
       disposables.forEach((item) => item.dispose());
       renderer.dispose();
