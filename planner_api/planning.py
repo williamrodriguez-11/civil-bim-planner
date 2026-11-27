@@ -234,25 +234,30 @@ def schedule(plan: Plan, sources, today=None):
     start_w, finish_w, start_pt, finish_pt, driver, natural = {}, {}, {}, {}, {}, {}
     for i in order:
         t, c, d = tasks[i], cal[i], durations[i]
-        best = (0, {"type": "start"}, plan.start)
-        if t.earliest:
-            w = c.work((t.earliest, 0))
-            if w >= best[0]:
-                best = (w, {"type": "earliest", "date": t.earliest.isoformat()}, t.earliest)
-        finish_based = False
+
+        def at(w, finish_based):
+            # A milestone driven by a finish sits at the end of that day.
+            if d == 0 and finish_based and w > 0:
+                return c.end_point(w)
+            return c.start_point(w)
+
+        # Candidates (working time, point, driver, natural date, finish
+        # based). The latest wins; on a tie the earlier candidate wins, so
+        # links come first and explain the date.
+        candidates = []
         for link in t.links:
             p = link.predecessor
-            if link.relation in ("FS", "FF"):
-                base = finish_pt[p]
-            else:
-                base = start_pt[p]
+            base = finish_pt[p] if link.relation in ("FS", "FF") else start_pt[p]
             w = c.work(base) + link.lag
             if link.relation in ("FF", "SF"):
                 w -= d  # the link constrains the finish
-            if w >= best[0] and not (w == best[0] and best[1]["type"] == "link"):
-                after = base[0] + timedelta(days=base[1])
-                best = (
+            w = max(w, 0)  # never before the project start
+            finish_based = link.relation in ("FS", "FF")
+            after = base[0] + timedelta(days=base[1])
+            candidates.append(
+                (
                     w,
+                    at(w, finish_based),
                     {
                         "type": "link",
                         "predecessor": p,
@@ -260,9 +265,22 @@ def schedule(plan: Plan, sources, today=None):
                         "lag": link.lag,
                     },
                     after if link.relation in ("FS", "SS") else None,
+                    finish_based,
                 )
-                finish_based = link.relation in ("FS", "FF")
-        s = max(best[0], 0)
+            )
+        if t.earliest:
+            w = c.work((t.earliest, 0))
+            candidates.append(
+                (
+                    w,
+                    at(w, False),
+                    {"type": "earliest", "date": t.earliest.isoformat()},
+                    t.earliest,
+                    False,
+                )
+            )
+        candidates.append((0, at(0, False), {"type": "start"}, plan.start, False))
+        s, point, why, near, finish_based = max(candidates, key=lambda x: (x[0], x[1]))
         if t.fixed_finish:
             if not c.works(t.fixed_finish):
                 raise ScheduleError(
@@ -279,13 +297,13 @@ def schedule(plan: Plan, sources, today=None):
                     "fixed_finish",
                 )
             s = fixed
-            best = (s, {"type": "fixed_finish", "date": t.fixed_finish.isoformat()}, None)
-            finish_based = True
+            why = {"type": "fixed_finish", "date": t.fixed_finish.isoformat()}
+            near = None
+            point = at(s, True)
         start_w[i], finish_w[i] = s, s + d
-        driver[i], natural[i] = best[1], best[2]
+        driver[i], natural[i] = why, near
         if d == 0:
             # A milestone sits at the instant that drives it.
-            point = c.end_point(s) if finish_based and s > 0 else c.start_point(s)
             start_pt[i] = finish_pt[i] = point
         else:
             start_pt[i], finish_pt[i] = c.start_point(s), c.end_point(s + d)
@@ -302,14 +320,18 @@ def schedule(plan: Plan, sources, today=None):
         lf = finish_w[i] if t.fixed_finish else c.work(end)
         for s, link in successors[i]:
             cs = cal[s]
-            if link.relation == "FS":
-                lf = min(lf, c.work(cs.end_point(late_start[s] - link.lag)))
-            elif link.relation == "FF":
-                lf = min(lf, c.work(cs.end_point(late_finish[s] - link.lag)))
-            elif link.relation == "SS":
-                lf = min(lf, c.work(cs.start_point(max(late_start[s] - link.lag, 0))) + d)
-            else:  # SF
-                lf = min(lf, c.work(cs.start_point(max(late_finish[s] - link.lag, 0))) + d)
+            # The successor's bound, as the latest instant with that working
+            # time (start of its next working day), so the predecessor keeps
+            # days its own calendar works and the successor's does not.
+            if link.relation in ("FS", "SS"):
+                bound = cs.start_point(max(late_start[s] - link.lag, 0))
+            else:
+                bound = cs.start_point(max(late_finish[s] - link.lag, 0))
+            if link.relation in ("FS", "FF"):
+                lf = min(lf, c.work(bound))
+            else:
+                lf = min(lf, c.work(bound) + d)
+        lf = max(lf, finish_w[i])
         late_finish[i], late_start[i] = lf, lf - d
 
     cut = plan.status_date or today or date.today()
@@ -347,13 +369,20 @@ def schedule(plan: Plan, sources, today=None):
         }
         base = plan.baseline.get(i)
         if base:
+            # Count from the earliest date involved: the baseline may be
+            # before a project start that moved later.
+            first_day = min(base.start, first, plan.start)
+            span = Calendar(first_day, c.weekdays, c.holidays)
+            end_half = 1 if base.duration or base.at_day_end else 0
             row["baseline"] = {
                 "start": base.start.isoformat(),
                 "finish": base.finish.isoformat(),
                 "duration": base.duration,
+                "at_day_end": base.at_day_end,
                 # Positive = later than the baseline, in working days.
-                "start_variance": start_w[i] - c.work((base.start, 0)),
-                "finish_variance": finish_w[i] - c.work((base.finish, 1 if base.duration else 0)),
+                "start_variance": span.work(start_pt[i])
+                - span.work((base.start, end_half if not base.duration else 0)),
+                "finish_variance": span.work(finish_pt[i]) - span.work((base.finish, end_half)),
             }
         output.append(row)
     return output

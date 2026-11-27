@@ -73,8 +73,8 @@ def project_xml(name, plan, tasks, phases=()):
         fields(
             b,
             Number=0,
-            Start=f"{base['start']}T{MORNING}",
-            Finish=f"{base['finish']}T{EVENING if duration else MORNING}",
+            Start=f"{base['start']}T{EVENING if not duration and base.get('at_day_end') else MORNING}",
+            Finish=f"{base['finish']}T{EVENING if duration or base.get('at_day_end') else MORNING}",
             Duration=f"PT{duration * 8}H0M0S",
             DurationFormat=7,
         )

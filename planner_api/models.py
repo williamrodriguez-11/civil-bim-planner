@@ -119,6 +119,8 @@ class BaselineTask(Input):
     start: date
     finish: date
     duration: int = Field(ge=0)
+    # A milestone captured at the end of its day (17:00).
+    at_day_end: bool = False
 
 
 class Plan(Input):

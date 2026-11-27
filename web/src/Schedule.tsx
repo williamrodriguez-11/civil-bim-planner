@@ -202,6 +202,9 @@ export function Schedule({
     phases: state.phases ?? [],
   });
   const [problem, setProblem] = useState<Problem | null>(null);
+  // Whether the timeline shown was computed for the current draft.
+  const [fresh, setFresh] = useState(!restored);
+  const latest = useRef<Plan>(restored ?? state.plan);
   const [durations, setDurations] = useState<Record<number, string>>({});
   const [folded, setFolded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -217,8 +220,10 @@ export function Schedule({
   const [width, setWidth] = useState(900);
 
   function setDraft(plan: Plan) {
+    latest.current = plan;
     setDraftState(plan);
     setDirty(true);
+    setFresh(false);
     setNotice("");
     try {
       sessionStorage.setItem(
@@ -233,8 +238,10 @@ export function Schedule({
   // Saved elsewhere (or just saved here): show the stored plan.
   useEffect(() => {
     if (dirty) return;
+    latest.current = state.plan;
     setDraftState(state.plan);
     setTimeline({ schedule: state.schedule, phases: state.phases ?? [] });
+    setFresh(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.project.revision]);
 
@@ -248,13 +255,15 @@ export function Schedule({
   // Durations typed but not valid yet stay in the cell and block the preview.
   const localErrors = useMemo(() => {
     const errors: Record<number, Record<string, string>> = {};
+    const present = new Set(draft.tasks.map((t) => t.id));
     for (const [id, raw] of Object.entries(durations))
-      if (!/^\d{1,4}$/.test(raw.trim()) || Number(raw) > 3650)
+      if (!present.has(+id)) continue;
+      else if (!/^\d{1,4}$/.test(raw.trim()) || Number(raw) > 3650)
         errors[+id] = {
           duration: "Escribe días laborables enteros (0 para un hito).",
         };
     return errors;
-  }, [durations]);
+  }, [durations, draft.tasks]);
 
   // Live recalculation of the draft on the server, without saving it.
   useEffect(() => {
@@ -270,6 +279,7 @@ export function Schedule({
         if (live) {
           setTimeline(result);
           setProblem(null);
+          setFresh(true);
         }
       } catch (e) {
         if (live)
@@ -331,6 +341,14 @@ export function Schedule({
     setDraft(plan);
   }
 
+  // New ids never reuse one still present in the baseline.
+  const nextId = () =>
+    Math.max(
+      0,
+      ...draft.tasks.map((t) => t.id),
+      ...Object.keys(draft.baseline ?? {}).map(Number),
+    );
+
   function patchTask(id: number, change: Partial<Task>) {
     setDraft({
       ...draft,
@@ -343,7 +361,7 @@ export function Schedule({
     at: { after: number } | { phase: string } | null,
     focus = true,
   ) {
-    let id = Math.max(0, ...draft.tasks.map((t) => t.id));
+    let id = nextId();
     const created: Task[] = items.map((item) => ({
       id: ++id,
       name: item.name,
@@ -379,8 +397,14 @@ export function Schedule({
 
   function removeTasks(ids: number[]) {
     const drop = new Set(ids);
+    setDurations((raw) =>
+      Object.fromEntries(Object.entries(raw).filter(([id]) => !drop.has(+id))),
+    );
     restructure(remove(tree, ids), (p) => ({
       ...p,
+      baseline: Object.fromEntries(
+        Object.entries(p.baseline ?? {}).filter(([id]) => !drop.has(+id)),
+      ),
       tasks: p.tasks
         .filter((t) => !drop.has(t.id))
         .map((t) => ({
@@ -413,7 +437,7 @@ export function Schedule({
             : t,
         ),
       };
-      let id = Math.max(0, ...draft.tasks.map((t) => t.id));
+      let id = nextId();
       const created: Task[] = rest.map((item) => ({
         id: ++id,
         name: item.name,
@@ -483,8 +507,11 @@ export function Schedule({
   async function save() {
     setSaving(true);
     setNotice("");
+    const sent = draft;
     try {
-      await mutate("/plan", cleaned(draft), "PUT");
+      await mutate("/plan", cleaned(sent), "PUT");
+      // Editing is locked while saving; this guards any change that slips in.
+      if (latest.current !== sent) return;
       try {
         sessionStorage.removeItem(storeKey);
       } catch {
@@ -511,7 +538,12 @@ export function Schedule({
         : Object.fromEntries(
             timeline.schedule.map((r) => [
               r.id,
-              { start: r.start, finish: r.finish, duration: r.duration },
+              {
+                start: r.start,
+                finish: r.finish,
+                duration: r.duration,
+                at_day_end: !!r.at_day_end,
+              },
             ]),
           ),
       baseline_saved: clear ? null : today(),
@@ -701,6 +733,7 @@ export function Schedule({
         className="planner-toolbar"
         role="toolbar"
         aria-label="Edición del cronograma"
+        inert={saving}
       >
         <button
           onClick={() =>
@@ -799,7 +832,8 @@ export function Schedule({
         </button>
         <button
           onClick={() => setBaseline(false)}
-          disabled={!timeline.schedule.length}
+          disabled={!timeline.schedule.length || !fresh || !!problem}
+          title={!fresh ? "Espera a que se recalculen las fechas" : undefined}
         >
           <Flag size={15} />{" "}
           {baselineSet ? "Actualizar línea base" : "Fijar línea base"}
@@ -836,7 +870,11 @@ export function Schedule({
         </div>
       )}
 
-      <div className={"planner-body" + (active ? " with-details" : "")}>
+      <div
+        className={"planner-body" + (active ? " with-details" : "")}
+        inert={saving}
+        aria-busy={saving}
+      >
         <div
           className="planner-scroll"
           ref={scroller}

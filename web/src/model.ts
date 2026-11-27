@@ -93,7 +93,10 @@ export interface Plan {
   tasks: Task[];
   groups: Record<string, string>;
   calendars?: Record<string, WorkCalendar>;
-  baseline?: Record<string, { start: string; finish: string; duration: number }>;
+  baseline?: Record<
+    string,
+    { start: string; finish: string; duration: number; at_day_end?: boolean }
+  >;
   baseline_saved?: string | null;
 }
 export interface WorkCalendar {
@@ -157,10 +160,18 @@ export interface State {
   trashed_tables: Pick<Source, "id" | "name" | "sheet">[];
   templates: Record<string, Mapping>;
   results: Record<number, { detail: Row[]; issues: Row[] }>;
-  issue_review?: Record<number, {
-    pending: number[];
-    history: { id: string; row: Row; archived_at: string; current: boolean }[];
-  }>;
+  issue_review?: Record<
+    number,
+    {
+      pending: number[];
+      history: {
+        id: string;
+        row: Row;
+        archived_at: string;
+        current: boolean;
+      }[];
+    }
+  >;
   plan: Plan;
   schedule: Scheduled[];
   phases?: Phase[];
@@ -187,18 +198,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       window.dispatchEvent(new Event("civil-session-expired"));
     }
     const data = await res.json().catch(() => ({}));
-    throw Object.assign(new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : Array.isArray(data.detail)
+    throw Object.assign(
+      new Error(
+        typeof data.detail === "string"
           ? data.detail
-              .map(
-                (x: { loc: unknown[]; msg: string }) =>
-                  x.loc.join(".") + " · " + x.msg,
-              )
-              .join(" / ")
-          : "No se pudo completar la operación.",
-    ), { info: data.error as ErrorInfo | undefined });
+          : Array.isArray(data.detail)
+            ? data.detail
+                .map(
+                  (x: { loc: unknown[]; msg: string }) =>
+                    x.loc.join(".") + " · " + x.msg,
+                )
+                .join(" / ")
+            : "No se pudo completar la operación.",
+      ),
+      { info: data.error as ErrorInfo | undefined },
+    );
   }
   return res.json();
 }
@@ -207,9 +221,11 @@ export const cleanError = (e: unknown) =>
 export const details = (s: State | null) =>
   Object.values(s?.results ?? {}).flatMap((x) => x.detail);
 export const issues = (s: State | null) =>
-  Object.entries(s?.results ?? {}).flatMap(([id, result]) =>
-    s?.issue_review?.[Number(id)]?.pending.map((index) => result.issues[index]) ??
-    result.issues,
+  Object.entries(s?.results ?? {}).flatMap(
+    ([id, result]) =>
+      s?.issue_review?.[Number(id)]?.pending.map(
+        (index) => result.issues[index],
+      ) ?? result.issues,
   );
 export interface Usage {
   total: number;

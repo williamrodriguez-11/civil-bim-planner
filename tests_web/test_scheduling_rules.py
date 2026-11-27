@@ -202,6 +202,65 @@ class CriticalPath(unittest.TestCase):
         self.assertEqual(phases(p, list(rows.values())), [])
 
 
+class EdgeCases(unittest.TestCase):
+    def test_mixed_calendars_keep_slack_non_negative(self):
+        # A Saturday task (7-day calendar) before a Monday–Friday task.
+        rows = run(
+            plan(
+                task(1, "1", 1, earliest="2026-11-07", calendar="7 días"),
+                task(2, "2", 2, (1, "FS", 0)),
+                calendars={"7 días": {"weekdays": list(range(7))}},
+            )
+        )
+        self.assertEqual(rows[1]["start"], "2026-11-07")
+        self.assertEqual(rows[2]["start"], "2026-11-09")
+        # It may slip to Sunday (its calendar works it) without delaying
+        # Monday's task: one day of slack, never a negative one.
+        self.assertEqual(rows[1]["slack"], 1)
+        self.assertEqual(rows[1]["late_finish"], "2026-11-08")
+        self.assertTrue(rows[2]["critical"])
+
+    def test_milestone_honours_an_earliest_date_on_a_tie(self):
+        rows = run(
+            plan(
+                task(1, "1", 5),
+                task(2, "2", 0, (1, "FS", 0), earliest="2026-11-09"),
+            )
+        )
+        self.assertEqual(rows[2]["start"], "2026-11-09")
+        self.assertFalse(rows[2]["at_day_end"])
+
+    def test_baseline_before_a_later_project_start(self):
+        p = Plan.model_validate(
+            {
+                "start": "2026-11-09",
+                "tasks": [task(1, "1", 2)],
+                "baseline": {"1": {"start": MONDAY, "finish": "2026-11-03", "duration": 2}},
+            }
+        )
+        row = schedule(p, {}, today=date(2026, 11, 2))[0]
+        self.assertEqual(row["baseline"]["start_variance"], 5)
+        self.assertEqual(row["baseline"]["finish_variance"], 5)
+
+    def test_unchanged_milestone_has_no_variance(self):
+        p = plan(
+            task(1, "1", 5),
+            task(2, "2", 0, (1, "FS", 0)),
+            baseline={
+                "2": {
+                    "start": "2026-11-06",
+                    "finish": "2026-11-06",
+                    "duration": 0,
+                    "at_day_end": True,
+                }
+            },
+        )
+        row = run(p)[2]
+        self.assertEqual(
+            (row["baseline"]["start_variance"], row["baseline"]["finish_variance"]), (0, 0)
+        )
+
+
 class Export(unittest.TestCase):
     def test_xml_keeps_milestones_calendars_baseline_and_phases(self):
         from xml.etree import ElementTree as ET
