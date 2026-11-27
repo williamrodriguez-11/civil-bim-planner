@@ -32,7 +32,7 @@ const SLAB = 0.2;
 
 /** Durations of each stage of the build, in seconds. */
 export const TIMING = {
-  axes: 1.3,
+  axes: 0.35,
   footings: 0.9,
   piece: 0.55,
   columns: 0.7,

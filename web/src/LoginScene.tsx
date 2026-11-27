@@ -1,71 +1,49 @@
 import { useEffect, useRef } from "react";
 import {
   BoxGeometry,
-  CanvasTexture,
+  BufferGeometry,
   Color,
   DirectionalLight,
   EdgesGeometry,
   Float32BufferAttribute,
-  BufferGeometry,
   GridHelper,
-  Group,
   HemisphereLight,
-  Line,
   LineBasicMaterial,
-  LineDashedMaterial,
   LineSegments,
   Mesh,
-  MeshBasicMaterial,
   MeshStandardMaterial,
   OrthographicCamera,
-  RingGeometry,
   Scene,
-  Sprite,
-  SpriteMaterial,
-  SRGBColorSpace,
   Vector3,
   WebGLRenderer,
   type Material,
 } from "three";
-import { AXES_X, AXES_Z, build, height, TIMING, type Piece } from "./structure";
+import { build, height, TIMING, type Piece } from "./structure";
 
 export type SceneStatus = "idle" | "pending" | "success";
 
-const BLUE = new Color("#3b82f6");
-const BLUE_LIT = new Color("#bfdbfe");
-const EDGE = new Color("#7fb2f0");
-const AMBER = new Color("#f5a524");
-const CONCRETE = new Color("#aeb8c4");
-const EXTEND = 2.2;
+// The app's palette: deep green surfaces, pale concrete, lime accent.
+const CONCRETE = new Color("#c9d3cc");
+const EDGE = new Color("#8fb5a2");
+const ACCENT = new Color("#cfeb9e");
+const ACCENT_LIT = new Color("#e6f7c4");
+const ELEVATION = Math.asin(1 / Math.sqrt(3)); // true isometric
+// Push-in on a successful sign-in; the framing leaves room for it.
+const SUCCESS_ZOOM = 1.1;
 const ease = (p: number) => 1 - Math.pow(1 - p, 3);
 const clamp = (v: number) => Math.min(1, Math.max(0, v));
 
-function label(text: string) {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 64;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#93c5fd";
-  ctx.font = "600 38px Inter Variable, Inter, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 32, 34);
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  return texture;
-}
-
-/** Isometric WebGL scene: setting-out axes, then footings, columns, beams
- * and slabs, then a slow camera sway. Loaded on demand by SceneSlot. */
+/** Isometric WebGL scene: footings, columns, beams and slabs rise in order;
+ * the finished frame sways gently and follows the pointer. Loaded on demand
+ * by SceneSlot. */
 export default function LoginScene({
   status,
   onReady,
   onFail,
-  onStage,
 }: {
   status: SceneStatus;
   onReady: () => void;
   onFail: () => void;
-  onStage: (label: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const live = useRef({ status, changed: 0 });
@@ -102,108 +80,40 @@ export default function LoginScene({
     renderer.domElement.addEventListener("webglcontextlost", lost);
 
     const scene = new Scene();
-    scene.add(new HemisphereLight(0xdbeafe, 0x0b1220, 1.25));
-    const sun = new DirectionalLight(0xffffff, 1.6);
+    scene.add(new HemisphereLight(0xeef7ee, 0x0d1f19, 1.3));
+    const sun = new DirectionalLight(0xffffff, 1.5);
     sun.position.set(9, 16, 5);
     scene.add(sun);
-    const grid = new GridHelper(34, 34, 0x1c3557, 0x132640);
+    const grid = new GridHelper(34, 34, 0x2f5a4b, 0x1f3e34);
     grid.position.y = -0.02;
     scene.add(grid);
     keep(grid.geometry);
     keep(grid.material as Material);
 
-    const { pieces, stages, end, xs, zs } = build();
-
-    // Setting-out axes: dashed blue lines drawn from one end, with bubbles.
-    const axisMaterial = keep(
-      new LineDashedMaterial({
-        color: BLUE.clone(),
-        dashSize: 1.1,
-        gapSize: 0.28,
-        transparent: true,
-        opacity: 0.9,
-      }),
-    );
-    const bubbleMaterial = keep(
-      new MeshBasicMaterial({
-        color: BLUE.clone(),
-        transparent: true,
-        opacity: 0,
-      }),
-    );
-    const ring = keep(new RingGeometry(0.5, 0.64, 40));
-    const axes: { group: Group; bubble: Group; delay: number }[] = [];
-    const axis = (from: Vector3, to: Vector3, text: string, delay: number) => {
-      const length = from.distanceTo(to);
-      const geometry = keep(
-        new BufferGeometry().setAttribute(
-          "position",
-          new Float32BufferAttribute([0, 0, 0, length, 0, 0], 3),
-        ),
-      );
-      const line = new Line(geometry, axisMaterial);
-      line.computeLineDistances();
-      const group = new Group();
-      group.position.copy(from);
-      group.rotation.y = -Math.atan2(to.z - from.z, to.x - from.x);
-      group.add(line);
-      const bubble = new Group();
-      const circle = new Mesh(ring, bubbleMaterial);
-      circle.rotation.x = -Math.PI / 2;
-      const texture = keep(label(text));
-      const sprite = new Sprite(
-        keep(
-          new SpriteMaterial({ map: texture, transparent: true, opacity: 0 }),
-        ),
-      );
-      sprite.scale.set(0.9, 0.9, 1);
-      sprite.position.y = 0.05;
-      bubble.add(circle, sprite);
-      // Bubble at the end facing the viewer, so the building never hides it.
-      bubble.position
-        .copy(to)
-        .add(new Vector3().subVectors(to, from).setLength(0.66));
-      scene.add(group, bubble);
-      axes.push({ group, bubble, delay });
-    };
-    const last = (list: number[]) => list[list.length - 1];
-    zs.forEach((z, i) =>
-      axis(
-        new Vector3(xs[0] - EXTEND, 0.01, z),
-        new Vector3(last(xs) + EXTEND, 0.01, z),
-        AXES_Z[i],
-        i * 0.12,
-      ),
-    );
-    xs.forEach((x, i) =>
-      axis(
-        new Vector3(x, 0.01, zs[0] - EXTEND),
-        new Vector3(x, 0.01, last(zs) + EXTEND),
-        AXES_X[i],
-        0.3 + i * 0.12,
-      ),
-    );
+    const { pieces, end, xs, zs } = build();
 
     // Vertical structural axes, lit while the sign-in is being processed.
     const vertical = keep(
       new LineBasicMaterial({
-        color: BLUE_LIT.clone(),
+        color: ACCENT_LIT.clone(),
         transparent: true,
         opacity: 0,
         // Seen through the concrete, like an x-ray view of the model.
         depthTest: false,
       }),
     );
-    const columnAxes = keep(
-      new BufferGeometry().setAttribute(
-        "position",
-        new Float32BufferAttribute(
-          xs.flatMap((x) => zs.flatMap((z) => [x, 0, z, x, height + 0.8, z])),
-          3,
+    const columnLines = new LineSegments(
+      keep(
+        new BufferGeometry().setAttribute(
+          "position",
+          new Float32BufferAttribute(
+            xs.flatMap((x) => zs.flatMap((z) => [x, 0, z, x, height + 0.8, z])),
+            3,
+          ),
         ),
       ),
+      vertical,
     );
-    const columnLines = new LineSegments(columnAxes, vertical);
     columnLines.visible = false;
     columnLines.renderOrder = 10;
     scene.add(columnLines);
@@ -228,7 +138,7 @@ export default function LoginScene({
           metalness: 0,
           transparent: true,
           opacity: 0,
-          emissive: AMBER.clone(),
+          emissive: ACCENT.clone(),
           emissiveIntensity: 0,
         }),
       );
@@ -247,38 +157,44 @@ export default function LoginScene({
       return { piece, mesh, material, outline };
     });
 
-    // Isometric orthographic camera that fits the whole site.
+    // Isometric orthographic camera that fits the building.
     const camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     const target = new Vector3(0, height * 0.42, 0);
     const radius = 40;
-    const place = (yaw: number) => {
+    const place = (yaw: number, pitch: number) => {
       const angle = Math.PI / 4 + yaw;
+      const up = ELEVATION + pitch;
       camera.position.set(
-        target.x + Math.cos(angle) * radius * 0.8165,
-        target.y + radius * 0.5774,
-        target.z + Math.sin(angle) * radius * 0.8165,
+        target.x + Math.cos(angle) * Math.cos(up) * radius,
+        target.y + Math.sin(up) * radius,
+        target.z + Math.sin(angle) * Math.cos(up) * radius,
       );
       camera.lookAt(target);
     };
+    const last = (list: number[]) => list[list.length - 1];
     const corners: Vector3[] = [];
-    for (const x of [xs[0] - EXTEND - 1, last(xs) + EXTEND + 1])
-      for (const z of [zs[0] - EXTEND - 1, last(zs) + EXTEND + 1])
+    for (const x of [xs[0] - 1.6, last(xs) + 1.6])
+      for (const z of [zs[0] - 1.6, last(zs) + 1.6])
         for (const y of [0, height + 0.8]) corners.push(new Vector3(x, y, z));
     const fit = () => {
       const w = root.clientWidth || 1,
         h = root.clientHeight || 1;
       renderer.setSize(w, h, false);
-      place(0);
-      camera.updateMatrixWorld();
+      // Fit the widest view the pointer can reach, so nothing is cut off.
       let half = 0;
       let halfY = 0;
-      for (const c of corners) {
-        const v = c.clone().applyMatrix4(camera.matrixWorldInverse);
-        half = Math.max(half, Math.abs(v.x));
-        halfY = Math.max(halfY, Math.abs(v.y));
-      }
+      for (const yaw of [-0.4, 0, 0.4])
+        for (const pitch of [-0.12, 0.12]) {
+          place(yaw, pitch);
+          camera.updateMatrixWorld();
+          for (const c of corners) {
+            const v = c.clone().applyMatrix4(camera.matrixWorldInverse);
+            half = Math.max(half, Math.abs(v.x));
+            halfY = Math.max(halfY, Math.abs(v.y));
+          }
+        }
       const aspect = w / h;
-      const size = Math.max(halfY, half / aspect) * 1.08;
+      const size = Math.max(halfY, half / aspect) * (1.04 * SUCCESS_ZOOM);
       camera.left = -size * aspect;
       camera.right = size * aspect;
       camera.top = size;
@@ -289,11 +205,28 @@ export default function LoginScene({
     const resize = new ResizeObserver(fit);
     resize.observe(root);
 
+    // The structure turns toward the pointer while it is over the scene.
+    const aim = { yaw: 0, pitch: 0, active: false };
+    const view = { yaw: 0, pitch: 0 };
+    const move = (e: PointerEvent) => {
+      const box = root.getBoundingClientRect();
+      const nx = (e.clientX - box.left) / box.width - 0.5;
+      const ny = (e.clientY - box.top) / box.height - 0.5;
+      aim.yaw = Math.max(-0.4, Math.min(0.4, nx * 0.8));
+      aim.pitch = Math.max(-0.12, Math.min(0.12, -ny * 0.24));
+      aim.active = true;
+    };
+    const leave = () => {
+      aim.active = false;
+    };
+    root.addEventListener("pointermove", move);
+    root.addEventListener("pointerleave", leave);
+    root.addEventListener("pointercancel", leave);
+
     let elapsed = 0,
       previous = performance.now(),
       frame = 0,
       visible = true,
-      stage = "",
       ready = false;
     const onScreen = new IntersectionObserver(([entry]) => {
       visible = entry.isIntersecting;
@@ -312,23 +245,8 @@ export default function LoginScene({
       const pending = status === "pending";
       const pulse = 0.5 + 0.5 * Math.sin(now / 160);
 
-      // Axes draw in; while signing in they brighten and pulse.
-      for (const a of axes) {
-        const p = ease(clamp((t - a.delay) / (TIMING.axes - 0.45)));
-        a.group.scale.x = Math.max(p, 0.0001);
-        const bubble = clamp((t - a.delay - TIMING.axes + 0.6) / 0.4);
-        a.bubble.children.forEach((child) => {
-          const material = (child as Mesh | Sprite).material as Material & {
-            opacity: number;
-          };
-          material.opacity = bubble;
-        });
-      }
-      const glow = pending ? 0.55 + 0.45 * pulse : 0;
-      axisMaterial.color.copy(BLUE).lerp(BLUE_LIT, glow);
-      bubbleMaterial.color.copy(axisMaterial.color);
       vertical.opacity = pending
-        ? 0.25 + 0.55 * pulse
+        ? 0.3 + 0.6 * pulse
         : Math.max(0, vertical.opacity - 0.05);
       columnLines.visible = vertical.opacity > 0;
 
@@ -346,28 +264,32 @@ export default function LoginScene({
           mesh.position.y = piece.y + (1 - e) * drop;
           material.opacity = e;
         }
-        // Amber accent as the piece lands, fading back to the drawing blue.
+        material.transparent = material.opacity < 1;
+        // Lime accent as the piece lands, fading back to concrete; while
+        // signing in, every outline glows softly with the axes.
         const settle =
           p < 1 ? e : Math.max(0, 1 - (t - piece.at - TIMING.piece) / 0.7);
-        material.transparent = material.opacity < 1;
+        const glow = Math.max(settle, pending ? 0.35 * pulse : 0);
         material.emissiveIntensity =
-          settle * (piece.kind === "slab" ? 0.12 : 0.35);
-        outline.color.copy(EDGE).lerp(AMBER, settle);
-        outline.opacity = 0.35 + 0.55 * settle;
+          settle * (piece.kind === "slab" ? 0.12 : 0.3);
+        outline.color.copy(EDGE).lerp(ACCENT, glow);
+        outline.opacity = 0.4 + 0.5 * glow;
       }
 
-      // Finished: a slow, eased sway; on success a short push-in.
-      const sway = clamp((t - end) / 2.5);
-      place(Math.sin(Math.max(0, t - end) * 0.22) * 0.16 * ease(sway));
+      // Follow the pointer; otherwise sway slowly once the frame is complete.
+      const sway =
+        Math.sin(Math.max(0, t - end) * 0.22) *
+        0.16 *
+        ease(clamp((t - end) / 2.5));
+      view.yaw += ((aim.active ? aim.yaw : sway) - view.yaw) * 0.08;
+      view.pitch += ((aim.active ? aim.pitch : 0) - view.pitch) * 0.08;
+      place(view.yaw, view.pitch);
       camera.zoom =
-        status === "success" ? 1 + 0.35 * ease(clamp(since / 0.6)) : 1;
+        status === "success"
+          ? 1 + (SUCCESS_ZOOM - 1) * ease(clamp(since / 0.6))
+          : 1;
       camera.updateProjectionMatrix();
 
-      const current = [...stages].reverse().find((s) => t >= s.at);
-      if (current && current.label !== stage) {
-        stage = current.label;
-        onStage(stage);
-      }
       renderer.render(scene, camera);
       if (!ready) {
         ready = true;
@@ -395,6 +317,9 @@ export default function LoginScene({
       resize.disconnect();
       onScreen.disconnect();
       document.removeEventListener("visibilitychange", onHidden);
+      root.removeEventListener("pointermove", move);
+      root.removeEventListener("pointerleave", leave);
+      root.removeEventListener("pointercancel", leave);
       renderer.domElement.removeEventListener("webglcontextlost", lost);
       disposables.forEach((item) => item.dispose());
       renderer.dispose();
