@@ -80,6 +80,18 @@ export function Grid({
     [settings, setSettings] = useState(false),
     [group, setGroup] = useState("");
   const visible = selection ?? keys;
+  // Numeric columns are summed inside groups; only text columns can group.
+  const numeric = useMemo(
+    () =>
+      new Set(
+        keys.filter((k) =>
+          rows.some((r) => typeof r[k] === "number") &&
+          rows.every((r) => r[k] === null || r[k] === undefined || typeof r[k] === "number"),
+        ),
+      ),
+    [rows, keys],
+  );
+  const groupable = keys.filter((k) => !numeric.has(k));
   const view = rows.filter((r) =>
     (field ? [field] : keys).some((k) =>
       String(r[k] ?? "")
@@ -88,23 +100,34 @@ export function Grid({
     ),
   );
   if (sort)
-    view.sort(
-      (a, b) =>
-        String(a[sort] ?? "").localeCompare(String(b[sort] ?? ""), "es", {
-          numeric: true,
-        }) * (asc ? 1 : -1),
-    );
-  const counts = new Map<string, number>();
-  if (group)
+    view.sort((a, b) => {
+      const x = a[sort],
+        y = b[sort];
+      const order =
+        typeof x === "number" && typeof y === "number"
+          ? x - y
+          : String(x ?? "").localeCompare(String(y ?? ""), "es", {
+              numeric: true,
+            });
+      return order * (asc ? 1 : -1);
+    });
+  const activeGroup = groupable.includes(group) ? group : "";
+  const sums = [...numeric].filter((k) => visible.includes(k));
+  const groups = new Map<string, Row>();
+  if (activeGroup)
     for (const r of view) {
-      const key = String(r[group] ?? "");
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const key = String(r[activeGroup] ?? "—");
+      const total =
+        groups.get(key) ??
+        ({ [activeGroup]: key, Filas: 0, ...Object.fromEntries(sums.map((k) => [k, 0])) } as Row);
+      total.Filas = (total.Filas as number) + 1;
+      for (const k of sums)
+        if (typeof r[k] === "number") total[k] = (total[k] as number) + (r[k] as number);
+      groups.set(key, total);
     }
-  const output: Row[] = group
-    ? Array.from(counts, ([value, count]) => ({ Grupo: value, Filas: count }))
-    : view;
-  const cols = group
-    ? ["Grupo", "Filas"]
+  const output: Row[] = activeGroup ? Array.from(groups.values()) : view;
+  const cols = activeGroup
+    ? [activeGroup, "Filas", ...sums]
     : visible.filter((k) => keys.includes(k));
   const pages = Math.max(1, Math.ceil(output.length / 25)),
     index = Math.min(page, pages - 1);
@@ -165,16 +188,33 @@ export function Grid({
       </div>
       {settings && (
         <div className="settings">
-          <label>
-            Agrupar por
-            <select value={group} onChange={(e) => setGroup(e.target.value)}>
-              <option value="">Sin agrupar</option>
-              {keys.map((k) => (
-                <option key={k}>{k}</option>
-              ))}
-            </select>
-          </label>
-          <p>Selecciona campos en el orden en que deben aparecer.</p>
+          {!!groupable.length && (
+            <label>
+              Agrupar por
+              <select value={activeGroup} onChange={(e) => setGroup(e.target.value)}>
+                <option value="">Sin agrupar · ver cada fila</option>
+                {groupable.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              <small>
+                Junta las filas con el mismo valor, las cuenta y suma sus
+                cantidades.
+              </small>
+            </label>
+          )}
+          <div className="settings-head">
+            <strong>Columnas que se muestran</strong>
+            {selection && (
+              <button onClick={() => setVisible(null)}>Mostrar todas</button>
+            )}
+          </div>
+          <small>
+            Pulsa una columna para ocultarla o volver a mostrarla. El número es
+            su posición en la tabla.
+          </small>
           <div className="chips">
             {keys.map((k) => (
               <button
@@ -201,7 +241,7 @@ export function Grid({
             <tr>
               {cols.map((k) => (
                 <th key={k}>
-                  {group ? (
+                  {activeGroup ? (
                     k
                   ) : (
                     <button
@@ -216,7 +256,7 @@ export function Grid({
                   )}
                 </th>
               ))}
-              {!group && rowAction && <th scope="col">Acción</th>}
+              {!activeGroup && rowAction && <th scope="col">Acción</th>}
             </tr>
           </thead>
           <tbody>
@@ -229,7 +269,7 @@ export function Grid({
                       : (r[k] ?? "—")}
                   </td>
                 ))}
-                {!group && rowAction && <td>{rowAction(r)}</td>}
+                {!activeGroup && rowAction && <td>{rowAction(r)}</td>}
               </tr>
             ))}
           </tbody>

@@ -30,6 +30,7 @@ import {
 } from "./model";
 import { Empty, Grid } from "./shared";
 import {
+  compareLevels,
   measurementName,
   measurementTotal,
   summarizeMeasurements,
@@ -149,8 +150,13 @@ function Shares({
     a.localeCompare(b, "es", { numeric: true }),
   );
   // More than six parts: the five largest keep a color, the rest fold into «Otros».
-  const shown = measured.length > SERIES ? measured.slice(0, SERIES - 1) : measured;
-  const rest = measured.slice(shown.length);
+  const largest = [...measured]
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+    .slice(0, measured.length > SERIES ? SERIES - 1 : SERIES)
+    .map((p) => p.name);
+  // Keep the chosen order; only the smallest parts fold into «Otros».
+  const shown = measured.filter((p) => largest.includes(p.name));
+  const rest = measured.filter((p) => !largest.includes(p.name));
   const colored = order.filter((n) => shown.some((p) => p.name === n));
   const color = (name: string) =>
     shown.some((p) => p.name === name)
@@ -294,7 +300,8 @@ export function Overview({
     [groupBy, setGroupBy] = useState("Nivel"),
     [selectedKey, setSelectedKey] = useState(""),
     [chartView, setChartView] = useState("Barras"),
-    [categoryFilter, setCategoryFilter] = useState("");
+    [categoryFilter, setCategoryFilter] = useState(""),
+    [order, setOrder] = useState<"place" | "desc" | "asc">("place");
   const categories = Array.from(
     new Set(data.map((r) => String(r.Categoría))),
   ).sort((a, b) => a.localeCompare(b, "es"));
@@ -326,11 +333,15 @@ export function Overview({
         measure,
       })),
     )
-    .sort(
-      (a, b) =>
-        (measurementTotal(b.measure) ?? -1) -
-        (measurementTotal(a.measure) ?? -1),
-    );
+    .sort((a, b) => {
+      if (order === "place")
+        return grouping === "Nivel"
+          ? compareLevels(a.name, b.name)
+          : a.name.localeCompare(b.name, "es", { numeric: true });
+      const x = measurementTotal(a.measure) ?? -1,
+        y = measurementTotal(b.measure) ?? -1;
+      return order === "desc" ? y - x : x - y;
+    });
   const peak = sums.reduce(
     (max, g) => Math.max(max, measurementTotal(g.measure) ?? 0),
     0,
@@ -528,6 +539,21 @@ export function Overview({
               </button>
             ))}
           </div>
+          <label className="sort-select">
+            Ordenar
+            <select
+              value={order}
+              onChange={(e) => setOrder(e.target.value as typeof order)}
+            >
+              <option value="place">
+                {grouping === "Nivel"
+                  ? "Por piso · de abajo hacia arriba"
+                  : "Por nombre · A a Z"}
+              </option>
+              <option value="desc">Mayor a menor cantidad</option>
+              <option value="asc">Menor a mayor cantidad</option>
+            </select>
+          </label>
           <div className="tabs" aria-label="Vista de cantidades">
             {["Barras", "Tabla", "Proporciones"].map((v) => (
               <button

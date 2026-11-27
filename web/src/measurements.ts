@@ -72,6 +72,34 @@ export function measurementTotal(measure: Measurement): number | null {
   return measure.total;
 }
 
+/** Position of a level from bottom to top. Uses the elevation in the name
+ * («NE -2.90m», «NE+14.35m») and otherwise words such as sótano, piso 3 or
+ * cubierta. Unknown names return null and keep their natural order. */
+export function levelHeight(name: string): number | null {
+  const text = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const elevation = text.match(/([+-])\s*(\d+(?:[.,]\d+)?)\s*m\b/);
+  if (elevation)
+    return Number(elevation[1] + elevation[2].replace(",", "."));
+  const number = Number(text.match(/\d+/)?.[0] ?? 1);
+  if (/cimentaci|fundaci|zapata/.test(text)) return -10000;
+  if (/sotano|basement/.test(text)) return -1000 - number;
+  if (/cubierta|azotea|terraza|roof/.test(text)) return 10000;
+  if (/piso|nivel|planta|level|story|storey/.test(text)) return number;
+  return null;
+}
+
+export function compareLevels(a: string, b: string) {
+  const x = levelHeight(a),
+    y = levelHeight(b);
+  if (x !== null && y !== null && x !== y) return x - y;
+  if (x !== null && y === null) return -1;
+  if (x === null && y !== null) return 1;
+  return a.localeCompare(b, "es", { numeric: true });
+}
+
 export function measurementName(measure: Measurement) {
   return measure.category
     ? measure.label + " · " + measure.category
