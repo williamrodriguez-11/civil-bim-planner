@@ -100,6 +100,10 @@ const longDate = (s: string) =>
   label(s, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const days = (n: number) => `${n} ${Math.abs(n) === 1 ? "día" : "días"}`;
 const today = () => new Date().toISOString().slice(0, 10);
+const variance = (n: number) =>
+  n
+    ? `${n > 0 ? "atraso" : "adelanto"} de ${days(Math.abs(n))}`
+    : "sin cambios";
 
 /** Only named activities reach the server; links to unnamed rows drop. */
 function cleaned(plan: Plan): Plan {
@@ -1138,9 +1142,7 @@ export function Schedule({
                               setActive({ kind: "phase", code: r.code })
                             }
                             aria-label={`Fase ${r.name}: ${shortDate(p.start)} a ${shortDate(p.finish)}`}
-                          >
-                            <i style={{ width: `${p.progress}%` }} />
-                          </button>
+                          ></button>
                         )}
                       </div>
                     </div>
@@ -1358,9 +1360,7 @@ export function Schedule({
                               setActive({ kind: "task", id: r.id })
                             }
                             aria-label={`${t.name}: ${shortDate(c.start)} a ${shortDate(c.finish)}`}
-                          >
-                            <i style={{ width: `${t.progress}%` }} />
-                          </button>
+                          ></button>
                         ))}
                     </div>
                     {rowError && (
@@ -1455,9 +1455,6 @@ export function Schedule({
           <i className="key-critical" /> Ruta crítica
         </span>
         <span>
-          <i className="key-progress" /> Avance real
-        </span>
-        <span>
           <i className="key-phase" /> Fase
         </span>
         <span>
@@ -1523,310 +1520,356 @@ function TaskDetails({
   const sources = state.tables.filter(
     (s) => state.results[s.id]?.detail.length,
   );
+  const milestone = task.duration === 0 && !task.quantity;
+  const setLink = (i: number, change: Partial<Task["links"][number]>) =>
+    patch({
+      links: task.links.map((x, j) => (j === i ? { ...x, ...change } : x)),
+    });
   return (
     <div className="details-body">
-      <span className="eyebrow">
-        {task.duration === 0 && !task.quantity ? "Hito" : "Actividad"}{" "}
-        {task.wbs}
-      </span>
-      <h3>{task.name || "Actividad nueva"}</h3>
-      {problem && (
-        <p className="error" role="alert">
-          {problem}
-        </p>
-      )}
-      {row && (
-        <dl className="details-dates">
-          <div>
-            <dt>Inicio</dt>
-            <dd>{longDate(row.start)}</dd>
-          </div>
-          <div>
-            <dt>Fin</dt>
-            <dd>
-              {row.milestone ? "Hito (sin duración)" : longDate(row.finish)}
-            </dd>
-          </div>
-          <div>
-            <dt>Duración</dt>
-            <dd>{days(row.duration)} laborables</dd>
-          </div>
-          <div>
-            <dt>Holgura</dt>
-            <dd>
-              {days(row.slack)}
-              {row.critical && (
-                <strong className="critical-tag"> · Ruta crítica</strong>
+      <div className="details-head">
+        <span className="eyebrow">
+          {milestone ? "Hito" : "Actividad"} {task.wbs}
+        </span>
+        <h3>{task.name || "Actividad nueva"}</h3>
+        {problem && (
+          <p className="error" role="alert">
+            {problem}
+          </p>
+        )}
+      </div>
+
+      <div className="details-columns">
+        <div className="details-col">
+          {row && (
+            <section className="details-card">
+              <h4>Resumen</h4>
+              <dl className="details-dates">
+                <div>
+                  <dt>{milestone ? "Fecha" : "Empieza"}</dt>
+                  <dd>{longDate(row.start)}</dd>
+                </div>
+                {!milestone && (
+                  <div>
+                    <dt>Termina</dt>
+                    <dd>{longDate(row.finish)}</dd>
+                  </div>
+                )}
+                {!milestone && (
+                  <div>
+                    <dt>Dura</dt>
+                    <dd>{days(row.duration)} laborables</dd>
+                  </div>
+                )}
+                <div>
+                  <dt>Margen</dt>
+                  <dd>
+                    {row.critical ? (
+                      <strong className="critical-tag">
+                        Ninguno: es parte de la ruta crítica
+                      </strong>
+                    ) : (
+                      `${days(row.slack)} laborables`
+                    )}
+                  </dd>
+                </div>
+              </dl>
+              <p className="muted">
+                {row.critical
+                  ? "Si se retrasa, se mueve el final del cronograma o se incumple una fecha obligatoria."
+                  : `Puede retrasarse hasta ${days(row.slack)} laborables sin mover el final del cronograma.`}
+              </p>
+              {row.baseline && (
+                <p className="muted">
+                  Línea base: {shortDate(row.baseline.start)} a{" "}
+                  {shortDate(row.baseline.finish)}. Inicio:{" "}
+                  {variance(row.baseline.start_variance)}. Fin:{" "}
+                  {variance(row.baseline.finish_variance)}.
+                </p>
               )}
-            </dd>
-          </div>
-          {row.baseline && (
-            <div>
-              <dt>Línea base</dt>
-              <dd>
-                {shortDate(row.baseline.start)} –{" "}
-                {shortDate(row.baseline.finish)}
-                {row.baseline.finish_variance
-                  ? ` · ${row.baseline.finish_variance > 0 ? "atraso" : "adelanto"} de ${days(
-                      Math.abs(row.baseline.finish_variance),
-                    )}`
-                  : " · sin variación"}
-              </dd>
-            </div>
+            </section>
           )}
-        </dl>
-      )}
-      {row && (
-        <div className="details-why">
-          <h4>Por qué estas fechas</h4>
-          {explain(row, names, plan).map((line) => (
-            <p key={line}>{line}</p>
-          ))}
+          {row && (
+            <section className="details-card details-why">
+              <h4>¿Por qué estas fechas?</h4>
+              {explain(row, names, plan).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </section>
+          )}
         </div>
-      )}
 
-      <h4>Predecesoras</h4>
-      {task.links.length === 0 && <p className="muted">Sin predecesoras.</p>}
-      {task.links.map((l, i) => (
-        <div key={l.predecessor} className="details-link">
-          <strong>{names.get(l.predecessor)}</strong>
-          <label>
-            Relación
-            <select
-              value={l.relation}
-              onChange={(e) =>
-                patch({
-                  links: task.links.map((x, j) =>
-                    j === i ? { ...x, relation: e.target.value } : x,
-                  ),
-                })
-              }
-            >
-              {Object.entries(RELATIONS).map(([code, r]) => (
-                <option key={code} value={code}>
-                  {r.short} · {r.sentence}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Desfase (días laborables)
-            <input
-              type="number"
-              step="1"
-              min="-3650"
-              max="3650"
-              value={l.lag}
-              onChange={(e) =>
-                patch({
-                  links: task.links.map((x, j) =>
-                    j === i
-                      ? { ...x, lag: Math.trunc(Number(e.target.value) || 0) }
-                      : x,
-                  ),
-                })
-              }
-            />
-          </label>
-          <small>
-            Positivo espera días; negativo adelanta (solapa) la actividad.
-          </small>
-          <button
-            onClick={() =>
-              patch({ links: task.links.filter((_, j) => j !== i) })
-            }
-          >
-            <X size={13} /> Quitar
-          </button>
-        </div>
-      ))}
-      <label>
-        Añadir predecesora
-        <input
-          list="planner-tasks"
-          placeholder="Busca por nombre"
-          onChange={(e) => {
-            const match = pickList.find(
-              (o) => o.text === e.target.value && o.id !== task.id,
-            );
-            if (match) {
-              addLink(match.id);
-              e.target.value = "";
-            }
-          }}
-        />
-      </label>
-
-      <h4>Avance y calendario</h4>
-      <label>
-        % completado
-        <input
-          type="number"
-          min="0"
-          max="100"
-          step="5"
-          value={task.progress}
-          onChange={(e) =>
-            patch({
-              progress: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
-            })
-          }
-        />
-      </label>
-      {row && (
-        <p className="muted">
-          Previsto a la fecha de seguimiento: {fmt(row.planned)} %.
-        </p>
-      )}
-      <label>
-        Calendario
-        <select
-          value={task.calendar ?? ""}
-          onChange={(e) => patch({ calendar: e.target.value })}
-        >
-          <option value="">Calendario del proyecto</option>
-          {Object.keys(plan.calendars ?? {}).map((name) => (
-            <option key={name}>{name}</option>
-          ))}
-        </select>
-      </label>
-
-      <h4>Restricciones</h4>
-      <label>
-        No comenzar antes del
-        <input
-          type="date"
-          value={task.earliest ?? ""}
-          onChange={(e) => patch({ earliest: e.target.value || null })}
-        />
-      </label>
-      <label>
-        Debe finalizar el
-        <input
-          type="date"
-          value={task.fixed_finish ?? ""}
-          onChange={(e) => patch({ fixed_finish: e.target.value || null })}
-        />
-      </label>
-
-      <h4>Duración desde cantidades</h4>
-      <label>
-        Origen de la duración
-        <select
-          value={task.quantity?.table ?? ""}
-          onChange={(e) =>
-            patch({
-              quantity: e.target.value
-                ? {
-                    table: +e.target.value,
-                    unit: availableMeasures(
-                      state.results[+e.target.value].detail,
-                    )[0].unit,
-                    rate: 1,
-                    level: "",
-                    category: "",
-                  }
-                : null,
-            })
-          }
-        >
-          <option value="">Duración manual</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} · {s.mapping?.category}
-            </option>
-          ))}
-        </select>
-      </label>
-      {task.quantity && state.results[task.quantity.table] && (
-        <>
-          <label>
-            Nivel
-            <select
-              value={task.quantity.level}
-              onChange={(e) =>
-                patch({
-                  quantity: { ...task.quantity!, level: e.target.value },
-                })
-              }
-            >
-              <option value="">Todos los niveles</option>
-              {[
-                ...new Set(
-                  state.results[task.quantity.table].detail.map((r) =>
-                    String(r.Nivel),
-                  ),
-                ),
-              ].map((n) => (
-                <option key={n}>{n}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Categoría
-            <select
-              value={task.quantity.category ?? ""}
-              onChange={(e) =>
-                patch({
-                  quantity: { ...task.quantity!, category: e.target.value },
-                })
-              }
-            >
-              <option value="">Todas las categorías</option>
-              {[
-                ...new Set(
-                  state.results[task.quantity.table].detail.map((r) =>
-                    String(r.Categoría),
-                  ),
-                ),
-              ].map((k) => (
-                <option key={k}>{k}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Magnitud
-            <select
-              value={task.quantity.unit}
-              onChange={(e) =>
-                patch({ quantity: { ...task.quantity!, unit: e.target.value } })
-              }
-            >
-              {availableMeasures(state.results[task.quantity.table].detail).map(
-                (m) => (
-                  <option key={m.unit} value={m.unit}>
-                    {m.label} ({unitLabel(m.unit)})
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-          <label>
-            Rendimiento ({unitLabel(task.quantity.unit)}/día)
-            <input
-              type="number"
-              min="0.000000001"
-              step="any"
-              value={task.quantity.rate || ""}
-              onChange={(e) =>
-                patch({
-                  quantity: {
-                    ...task.quantity!,
-                    rate: Number(e.target.value) || 0,
-                  },
-                })
-              }
-            />
-          </label>
-          {row?.amount != null && (
-            <p className="notice">
-              {fmt(row.amount)} {unitLabel(task.quantity.unit)} ÷{" "}
-              {fmt(task.quantity.rate)} ={" "}
-              <strong>{days(row.duration)} laborables</strong>
+        <div className="details-col">
+          <section className="details-card">
+            <h4>¿De qué depende?</h4>
+            <p className="muted">
+              Actividades que tienen que avanzar antes que esta.
             </p>
-          )}
-        </>
-      )}
+            {task.links.length === 0 && (
+              <p className="details-empty">No depende de ninguna actividad.</p>
+            )}
+            {task.links.map((l, i) => (
+              <div key={l.predecessor} className="details-link">
+                <div className="details-link-head">
+                  <strong>«{names.get(l.predecessor)}»</strong>
+                  <button
+                    aria-label={`Quitar dependencia de ${names.get(l.predecessor)}`}
+                    onClick={() =>
+                      patch({ links: task.links.filter((_, j) => j !== i) })
+                    }
+                  >
+                    <X size={13} /> Quitar
+                  </button>
+                </div>
+                <label>
+                  Cómo se relacionan
+                  <select
+                    value={l.relation}
+                    onChange={(e) => setLink(i, { relation: e.target.value })}
+                  >
+                    {Object.entries(RELATIONS).map(([code, r]) => (
+                      <option key={code} value={code}>
+                        {r.sentence} «{names.get(l.predecessor)}» ({r.short})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Días de espera
+                  <input
+                    type="number"
+                    step="1"
+                    min="-3650"
+                    max="3650"
+                    value={l.lag}
+                    onChange={(e) =>
+                      setLink(i, {
+                        lag: Math.trunc(Number(e.target.value) || 0),
+                      })
+                    }
+                  />
+                </label>
+                <small>
+                  {l.lag > 0
+                    ? `Espera ${days(l.lag)} laborables más.`
+                    : l.lag < 0
+                      ? `Se adelanta ${days(-l.lag)} laborables (se solapan).`
+                      : "Sin espera. Escribe un número negativo para solaparlas."}
+                </small>
+              </div>
+            ))}
+            <label>
+              Añadir dependencia
+              <input
+                list="planner-tasks"
+                placeholder="Busca una actividad por nombre"
+                onChange={(e) => {
+                  const match = pickList.find(
+                    (o) => o.text === e.target.value && o.id !== task.id,
+                  );
+                  if (match) {
+                    addLink(match.id);
+                    e.target.value = "";
+                  }
+                }}
+              />
+            </label>
+          </section>
+
+          <section className="details-card">
+            <h4>
+              Fechas obligatorias <small>(opcional)</small>
+            </h4>
+            <p className="muted">
+              Úsalas solo si hay una fecha que no se puede mover.
+            </p>
+            <label>
+              No empezar antes del
+              <span className="date-field">
+                <input
+                  type="date"
+                  value={task.earliest ?? ""}
+                  onChange={(e) => patch({ earliest: e.target.value || null })}
+                />
+                {task.earliest && (
+                  <button
+                    aria-label="Quitar «No empezar antes del»"
+                    onClick={() => patch({ earliest: null })}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </span>
+            </label>
+            <label>
+              Terminar exactamente el
+              <span className="date-field">
+                <input
+                  type="date"
+                  value={task.fixed_finish ?? ""}
+                  onChange={(e) =>
+                    patch({ fixed_finish: e.target.value || null })
+                  }
+                />
+                {task.fixed_finish && (
+                  <button
+                    aria-label="Quitar «Terminar exactamente el»"
+                    onClick={() => patch({ fixed_finish: null })}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </span>
+            </label>
+          </section>
+
+          <details className="details-card" open={!!task.calendar}>
+            <summary>Días de trabajo de esta actividad</summary>
+            <label>
+              Calendario
+              <select
+                value={task.calendar ?? ""}
+                onChange={(e) => patch({ calendar: e.target.value })}
+              >
+                <option value="">El del proyecto</option>
+                {Object.keys(plan.calendars ?? {}).map((name) => (
+                  <option key={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+            <p className="muted">
+              Por ejemplo, un curado que sigue el fin de semana. Los calendarios
+              se crean en «Calendario y seguimiento».
+            </p>
+          </details>
+
+          <details className="details-card" open={!!task.quantity}>
+            <summary>Calcular la duración con cantidades (opcional)</summary>
+            <label>
+              Origen de la duración
+              <select
+                value={task.quantity?.table ?? ""}
+                onChange={(e) =>
+                  patch({
+                    quantity: e.target.value
+                      ? {
+                          table: +e.target.value,
+                          unit: availableMeasures(
+                            state.results[+e.target.value].detail,
+                          )[0].unit,
+                          rate: 1,
+                          level: "",
+                          category: "",
+                        }
+                      : null,
+                  })
+                }
+              >
+                <option value="">Duración escrita a mano</option>
+                {sources.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} · {s.mapping?.category}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {task.quantity && state.results[task.quantity.table] && (
+              <>
+                <label>
+                  Nivel
+                  <select
+                    value={task.quantity.level}
+                    onChange={(e) =>
+                      patch({
+                        quantity: { ...task.quantity!, level: e.target.value },
+                      })
+                    }
+                  >
+                    <option value="">Todos los niveles</option>
+                    {[
+                      ...new Set(
+                        state.results[task.quantity.table].detail.map((r) =>
+                          String(r.Nivel),
+                        ),
+                      ),
+                    ].map((n) => (
+                      <option key={n}>{n}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Categoría
+                  <select
+                    value={task.quantity.category ?? ""}
+                    onChange={(e) =>
+                      patch({
+                        quantity: {
+                          ...task.quantity!,
+                          category: e.target.value,
+                        },
+                      })
+                    }
+                  >
+                    <option value="">Todas las categorías</option>
+                    {[
+                      ...new Set(
+                        state.results[task.quantity.table].detail.map((r) =>
+                          String(r.Categoría),
+                        ),
+                      ),
+                    ].map((k) => (
+                      <option key={k}>{k}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Magnitud
+                  <select
+                    value={task.quantity.unit}
+                    onChange={(e) =>
+                      patch({
+                        quantity: { ...task.quantity!, unit: e.target.value },
+                      })
+                    }
+                  >
+                    {availableMeasures(
+                      state.results[task.quantity.table].detail,
+                    ).map((m) => (
+                      <option key={m.unit} value={m.unit}>
+                        {m.label} ({unitLabel(m.unit)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Rendimiento ({unitLabel(task.quantity.unit)}/día)
+                  <input
+                    type="number"
+                    min="0.000000001"
+                    step="any"
+                    value={task.quantity.rate || ""}
+                    onChange={(e) =>
+                      patch({
+                        quantity: {
+                          ...task.quantity!,
+                          rate: Number(e.target.value) || 0,
+                        },
+                      })
+                    }
+                  />
+                </label>
+                {row?.amount != null && (
+                  <p className="notice">
+                    {fmt(row.amount)} {unitLabel(task.quantity.unit)} ÷{" "}
+                    {fmt(task.quantity.rate)} ={" "}
+                    <strong>{days(row.duration)} laborables</strong>
+                  </p>
+                )}
+              </>
+            )}
+          </details>
+        </div>
+      </div>
 
       <div className="details-actions">
         <button onClick={() => onMove(-1)}>Subir</button>
@@ -1868,12 +1911,6 @@ function PhaseDetails({
             <dt>Duración</dt>
             <dd>{days(phase.duration)} laborables del proyecto</dd>
           </div>
-          <div>
-            <dt>Avance</dt>
-            <dd>
-              {fmt(phase.progress)} % real · {fmt(phase.planned)} % previsto
-            </dd>
-          </div>
         </dl>
       ) : (
         <p className="muted">
@@ -1882,7 +1919,7 @@ function PhaseDetails({
       )}
       <p className="muted">
         Las fechas de la fase van del primer inicio al último fin de sus
-        actividades; el avance se pondera por duración.
+        actividades.
       </p>
       <div className="details-actions">
         <button onClick={onUngroup}>Desagrupar fase</button>
