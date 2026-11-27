@@ -198,3 +198,79 @@ test("Enter añade filas, Tab pasa de celda y el seguimiento compara el avance",
   await name.fill("Replanteo");
   await expect(name).not.toHaveAttribute("aria-invalid", "true");
 });
+
+test("Como en Project: fechas en la tabla, predecesoras por número y enlazar arrastrando", async ({
+  page,
+}) => {
+  await page.request.post("/api/auth/register", {
+    data: { username: "como-project", password: "prueba de calendario" },
+  });
+  await page.request.post("/api/projects", { data: { name: "Obra" } });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Programación", exact: true }).click();
+  await page.getByLabel("Inicio del proyecto").fill("2026-11-02");
+  await page.getByLabel("Primera actividad").fill("Desmonte y limpieza");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Zapatas");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Columnas");
+  const date = (field: "Inicio" | "Fin", name: string) =>
+    page.getByRole("button", { name: new RegExp(`^${field} de ${name}:`) });
+
+  // Typing a finish changes the duration (working days, weekend skipped).
+  await date("Fin", "Desmonte y limpieza").click();
+  await page.getByLabel("Fin de Desmonte y limpieza").fill("2026-11-10");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByLabel("Duración en días laborables de Desmonte y limpieza"),
+  ).toHaveValue("7");
+
+  // Typing a start sets «no empezar antes de» that date.
+  await date("Inicio", "Columnas").click();
+  await page.getByLabel("Inicio de Columnas").fill("2026-11-18");
+  await page.keyboard.press("Enter");
+  await expect(date("Inicio", "Columnas")).toHaveText("18 nov");
+
+  // Predecessor typed by number, with a lag, as in Project.
+  const preds = page.getByLabel("Buscar predecesora de Zapatas");
+  await preds.fill("1+2");
+  await preds.press("Enter");
+  await expect(date("Inicio", "Zapatas")).toHaveText("13 nov");
+  const row = page.locator(".planner-row", {
+    has: page.locator('input[value="Zapatas"]'),
+  });
+  await expect(row).toContainText("Empieza cuando termine (+2 d)");
+  // An unknown number is reported on the cell.
+  const own = page.getByLabel("Buscar predecesora de Columnas");
+  await own.fill("9");
+  await own.press("Enter");
+  await expect(own).toHaveAttribute("aria-invalid", "true");
+  await own.fill("");
+  await own.press("Enter");
+
+  // Drag from the «Zapatas» bar onto the «Columnas» row to link them.
+  const from = row.locator(".bar");
+  const to = page
+    .locator(".planner-row", { has: page.locator('input[value="Columnas"]') })
+    .locator(".planner-track");
+  const a = (await from.boundingBox())!;
+  const b = (await to.boundingBox())!;
+  await page.mouse.move(a.x + a.width - 3, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 40, b.y + b.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect(
+    page.getByText("«Columnas» empezará cuando termine «Zapatas»."),
+  ).toBeVisible();
+  await expect(date("Inicio", "Columnas")).toHaveText("18 nov");
+
+  // Both fixed dates set: the panel offers to fit the duration to them.
+  await page.getByLabel("Nombre de la actividad 1", { exact: true }).focus();
+  await page.getByLabel("No empezar antes del").fill("2026-11-16");
+  await page.getByLabel("Terminar exactamente el").fill("2026-11-19");
+  await page.getByRole("button", { name: /Que dure del/ }).click();
+  await expect(
+    page.getByLabel("Duración en días laborables de Desmonte y limpieza"),
+  ).toHaveValue("4");
+  await expect(date("Inicio", "Desmonte y limpieza")).toHaveText("16 nov");
+});

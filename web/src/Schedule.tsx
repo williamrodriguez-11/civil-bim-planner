@@ -100,6 +100,101 @@ const longDate = (s: string) =>
   label(s, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const days = (n: number) => `${n} ${Math.abs(n) === 1 ? "día" : "días"}`;
 const today = () => new Date().toISOString().slice(0, 10);
+/** Working days from one date to another, both included, in the calendar
+ * of an activity (or the project's). */
+function workdays(from: string, to: string, plan: Plan, calendar?: string) {
+  const own = calendar ? plan.calendars?.[calendar] : undefined;
+  const weekdays = new Set(own ? own.weekdays : plan.weekdays);
+  const holidays = new Set([
+    ...(own ? own.holidays : []),
+    ...(!own || own.project_holidays ? plan.holidays : []),
+  ]);
+  // Stops past the longest allowed duration, so far dates stay fast.
+  let count = 0;
+  for (let d = toDay(from), end = toDay(to); d <= end && count <= 3650; d++) {
+    const weekday = (new Date(d * DAY).getUTCDay() + 6) % 7;
+    if (weekdays.has(weekday) && !holidays.has(fromDay(d))) count++;
+  }
+  return count;
+}
+
+const RELATION_CODES: Record<string, string> = {
+  FC: "FS",
+  FS: "FS",
+  CC: "SS",
+  SS: "SS",
+  FF: "FF",
+  CF: "SF",
+  SF: "SF",
+};
+
+/** Predecessors typed as in Project: «1.1», «1.1CC», «1.2FC+2», «2-1»,
+ * several separated by ; or , — or an activity name. */
+function parsePredecessors(
+  text: string,
+  tasks: Task[],
+  self: number,
+): { links: Task["links"]; error: string; explicit?: number[] } {
+  const links: Task["links"] = [];
+  const explicit: number[] = []; // links with a relation or lag written out
+  // A whole name may itself contain commas or semicolons.
+  const whole = text.trim().toLowerCase();
+  const code = /^[\d.]+\s*(FC|CC|FF|CF|FS|SS|SF)?\s*([+-]\s*\d+.*)?$/i.test(
+    whole,
+  );
+  const exact = code
+    ? []
+    : tasks.filter((t) => t.name.trim().toLowerCase() === whole);
+  if (exact.length > 1)
+    return {
+      links: [],
+      error: `Hay varias actividades «${text.trim()}»: escribe su número.`,
+    };
+  const parts = exact.length === 1 ? [text.trim()] : text.split(/[;,]/);
+  for (const raw of parts.map((x) => x.trim()).filter(Boolean)) {
+    const token = raw;
+    const m = token.match(
+      /^(\d+(?:\.\d+)*)\s*(FC|CC|FF|CF|FS|SS|SF)?\s*(?:([+-])\s*(\d+)\s*(?:d|días?)?)?$/i,
+    );
+    const named = tasks.filter((t) => t.name.trim());
+    const found = m
+      ? named.filter((t) => t.wbs === m[1])
+      : named.filter(
+          (t) => t.name.trim().toLowerCase() === token.toLowerCase(),
+        );
+    if (found.length > 1)
+      return {
+        links: [],
+        error: `Hay varias actividades «${raw}»: escribe su número.`,
+      };
+    const target = found[0];
+    if (!target) return { links: [], error: `No hay una actividad «${raw}».` };
+    if (target.id === self)
+      return {
+        links: [],
+        error: "Una actividad no puede depender de sí misma.",
+      };
+    if (links.some((l) => l.predecessor === target.id))
+      return {
+        links: [],
+        error: `«${target.name || raw}» aparece dos veces.`,
+      };
+    const lag = m?.[4] ? Number(m[3] + m[4]) : 0;
+    if (Math.abs(lag) > 3650)
+      return {
+        links: [],
+        error: "La espera no puede pasar de 3650 días.",
+      };
+    if (m?.[2] || m?.[4]) explicit.push(target.id);
+    links.push({
+      predecessor: target.id,
+      relation: m?.[2] ? RELATION_CODES[m[2].toUpperCase()] : "FS",
+      lag,
+    });
+  }
+  return { links, error: "", explicit };
+}
+
 const variance = (n: number) =>
   n
     ? `${n > 0 ? "atraso" : "adelanto"} de ${days(Math.abs(n))}`
@@ -233,6 +328,23 @@ export function Schedule({
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [phaseName, setPhaseName] = useState<string | null>(null);
   const focusNext = useRef<{ id: number; field: string } | null>(null);
+  const [editing, setEditing] = useState<{
+    id: number;
+    field: "start" | "finish";
+    value: string; // shown when the editor opened
+  } | null>(null);
+  const [typed, setTyped] = useState<
+    Record<number, { error: string; text: string }>
+  >({});
+  const [drag, setDrag] = useState<{
+    from: number;
+    x0: number;
+    y0: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const dragged = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
 
@@ -281,18 +393,25 @@ export function Schedule({
   const localErrors = useMemo(() => {
     const errors: Record<number, Record<string, string>> = {};
     const present = new Set(draft.tasks.map((t) => t.id));
+    for (const [id, entry] of Object.entries(typed))
+      if (present.has(+id) && entry.error)
+        errors[+id] = { ...errors[+id], links: entry.error };
     // Saved activities keep their name: clearing it is an error, not a delete.
     for (const t of draft.tasks)
       if (saved.has(t.id) && !t.name.trim())
-        errors[t.id] = { name: "Escribe un nombre o elimina la actividad." };
+        errors[t.id] = {
+          ...errors[t.id],
+          name: "Escribe un nombre o elimina la actividad.",
+        };
     for (const [id, raw] of Object.entries(durations))
       if (!present.has(+id)) continue;
       else if (!/^\d{1,4}$/.test(raw.trim()) || Number(raw) > 3650)
         errors[+id] = {
+          ...errors[+id],
           duration: "Escribe días laborables enteros (0 para un hito).",
         };
     return errors;
-  }, [durations, draft.tasks, saved]);
+  }, [durations, draft.tasks, saved, typed]);
 
   // Live recalculation of the draft on the server, without saving it.
   useEffect(() => {
@@ -311,11 +430,13 @@ export function Schedule({
           setFresh(true);
         }
       } catch (e) {
-        if (live)
+        if (live) {
+          setNotice("");
           setProblem({
             message: cleanError(e),
             info: (e as Error & { info?: ErrorInfo }).info,
           });
+        }
       }
     }, 250);
     return () => {
@@ -416,6 +537,145 @@ export function Schedule({
     return created;
   }
 
+  // As in Project: typing a start sets «no empezar antes de» that date;
+  // typing a finish changes the duration, counting working days.
+  function setStart(id: number, value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    patchTask(id, { earliest: value });
+  }
+  function setFinish(id: number, value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    const t = tasks.get(id)!;
+    const start = computed.get(id)?.start ?? t.earliest ?? draft.start;
+    if (!value) return;
+    if (value < start) {
+      setNotice(
+        `No se cambió: el fin no puede ser anterior al inicio (${shortDate(start)}).`,
+      );
+      return;
+    }
+    if (!workdays(value, value, draft, t.calendar)) {
+      setNotice(
+        `No se cambió: el ${shortDate(value)} no es día laborable para esta actividad.`,
+      );
+      return;
+    }
+    const length = workdays(start, value, draft, t.calendar);
+    if (length > 3650) {
+      setNotice("No se cambió: la duración no puede pasar de 3650 días.");
+      return;
+    }
+    const { [id]: _, ...rest } = durations;
+    setDurations(rest);
+    // A delivery date set under «Terminar exactamente el» moves with the
+    // typed finish instead of being dropped.
+    patchTask(id, {
+      duration: Math.max(1, length),
+      ...(t.fixed_finish ? { fixed_finish: value } : {}),
+    });
+  }
+
+  function commitTyped(id: number, input: HTMLInputElement) {
+    const text = input.value.trim();
+    if (!text) {
+      setTyped(({ [id]: _, ...rest }) => rest);
+      return;
+    }
+    const t = tasks.get(id)!;
+    const picked = pickList.find((o) => o.text === text);
+    if (picked && t.links.some((l) => l.predecessor === picked.id)) {
+      setTyped(({ [id]: _, ...rest }) => rest);
+      input.value = "";
+      return;
+    }
+    const {
+      links: parsed,
+      error,
+      explicit = [],
+    } = picked
+      ? picked.id === id
+        ? { links: [], error: "Una actividad no puede depender de sí misma." }
+        : {
+            links: [
+              {
+                predecessor: picked.id,
+                relation: "FS" as const,
+                lag: 0,
+              },
+            ],
+            error: "",
+          }
+      : parsePredecessors(text, draft.tasks, id);
+    if (error) {
+      // Kept with its text, so it survives folding the phase.
+      setTyped({ ...typed, [id]: { error, text } });
+      return;
+    }
+    // An existing predecessor named again without a relation or lag
+    // keeps its settings.
+    const links = parsed.filter(
+      (l) =>
+        explicit.includes(l.predecessor) ||
+        !t.links.some((x) => x.predecessor === l.predecessor),
+    );
+    const others = t.links.filter(
+      (l) => !links.some((x) => x.predecessor === l.predecessor),
+    );
+    patchTask(id, { links: [...others, ...links] });
+    setTyped(({ [id]: _, ...rest }) => rest);
+    input.value = "";
+  }
+
+  function startDrag(e: React.PointerEvent, id: number) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    // Commit any open cell first, against the dates it was opened with.
+    (document.activeElement as HTMLElement | null)?.blur();
+    rowsRef.current?.setPointerCapture(e.pointerId);
+    setDrag({
+      from: id,
+      x0: e.clientX,
+      y0: e.clientY,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }
+
+  function finishDrag(e: React.PointerEvent) {
+    if (!drag) return;
+    const moved = Math.abs(drag.x - drag.x0) + Math.abs(drag.y - drag.y0);
+    const from = drag.from;
+    setDrag(null);
+    if (moved < 6) {
+      setActive({ kind: "task", id: from });
+      return;
+    }
+    dragged.current = true;
+    setTimeout(() => (dragged.current = false), 0);
+    const target = (
+      document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+    )?.closest<HTMLElement>("[data-row-task]");
+    const to = Number(target?.dataset.rowTask);
+    if (!to || to === from) return;
+    if (!tasks.get(to)?.name.trim() || !tasks.get(from)?.name.trim()) {
+      setNotice("Ponle nombre a la actividad antes de enlazarla.");
+      return;
+    }
+    const t = tasks.get(to)!;
+    if (t.links.some((l) => l.predecessor === from)) {
+      setNotice(
+        `«${names.get(to)}» ya depende de «${names.get(from)}». Cambia cómo se relacionan en el detalle de la actividad.`,
+      );
+      return;
+    }
+    patchTask(to, {
+      links: [...t.links, { predecessor: from, relation: "FS", lag: 0 }],
+    });
+    setNotice(
+      `Vínculo añadido: «${names.get(to)}» empezará cuando termine «${names.get(from)}».`,
+    );
+  }
+
   function addLink(to: number, from: number) {
     const t = tasks.get(to)!;
     if (t.links.some((l) => l.predecessor === from)) return;
@@ -426,6 +686,9 @@ export function Schedule({
 
   function removeTasks(ids: number[]) {
     const drop = new Set(ids);
+    setTyped((raw) =>
+      Object.fromEntries(Object.entries(raw).filter(([id]) => !drop.has(+id))),
+    );
     setDurations((raw) =>
       Object.fromEntries(Object.entries(raw).filter(([id]) => !drop.has(+id))),
     );
@@ -917,6 +1180,30 @@ export function Schedule({
           </button>
         </div>
       )}
+      {(() => {
+        // A cell error inside a folded phase still blocks saving: say where.
+        const shown = new Set(
+          visible.flatMap((r) => (r.kind === "task" ? [r.id] : [])),
+        );
+        const hidden = Object.keys(localErrors)
+          .map(Number)
+          .find((id) => !shown.has(id));
+        if (hidden === undefined) return null;
+        return (
+          <div className="error planner-problem" role="alert">
+            Hay un dato por corregir en «{names.get(hidden)}», dentro de una
+            fase plegada.
+            <button
+              onClick={() => {
+                setFolded(new Set());
+                setActive({ kind: "task", id: hidden });
+              }}
+            >
+              Mostrar
+            </button>
+          </div>
+        );
+      })()}
       {problem && (
         <div className="error planner-problem" role="alert">
           {problem.message}
@@ -986,8 +1273,14 @@ export function Schedule({
             </div>
 
             <div
-              className="planner-rows"
+              className={"planner-rows" + (drag ? " linking" : "")}
+              ref={rowsRef}
               style={{ height: Math.max(1, visible.length) * ROW }}
+              onPointerMove={(e) =>
+                drag && setDrag({ ...drag, x: e.clientX, y: e.clientY })
+              }
+              onPointerUp={finishDrag}
+              onPointerCancel={() => setDrag(null)}
             >
               <div
                 className="planner-shade"
@@ -1036,6 +1329,20 @@ export function Schedule({
                     <path d="M0 0 L8 4 L0 8 z" fill="var(--critical)" />
                   </marker>
                 </defs>
+                {drag &&
+                  rowsRef.current &&
+                  (() => {
+                    const box = rowsRef.current.getBoundingClientRect();
+                    return (
+                      <line
+                        className="drag-link"
+                        x1={drag.x0 - box.left - tableWidth}
+                        y1={drag.y0 - box.top}
+                        x2={drag.x - box.left - tableWidth}
+                        y2={drag.y - box.top}
+                      />
+                    );
+                  })()}
                 {arrows.map((a) => (
                   <path
                     key={a.key}
@@ -1156,6 +1463,7 @@ export function Schedule({
                 return (
                   <div
                     key={r.id}
+                    data-row-task={r.id}
                     className={
                       "planner-row" +
                       (isActive ? " active" : "") +
@@ -1246,22 +1554,99 @@ export function Schedule({
                           onKeyDown={(e) => onCellKey(e, r.id)}
                         />
                       </span>
-                      <span
-                        className="date"
-                        title={c ? longDate(c.start) : undefined}
-                      >
-                        {c ? cellDate(c.start) : "—"}
-                      </span>
-                      <span
-                        className="date"
-                        title={c ? longDate(c.finish) : undefined}
-                      >
-                        {c && !c.milestone
-                          ? cellDate(c.finish)
-                          : c
-                            ? "Hito"
-                            : "—"}
-                      </span>
+                      {(["start", "finish"] as const).map((field) => {
+                        const value = c ? c[field] : "";
+                        const isMilestone = !!c?.milestone;
+                        const locked =
+                          !c ||
+                          (field === "finish" &&
+                            (isMilestone ||
+                              !!t.quantity ||
+                              t.links.some(
+                                (l) =>
+                                  l.relation === "FF" || l.relation === "SF",
+                              )));
+                        // Waiting for the recalculation: stays focusable.
+                        const waiting = !locked && field === "finish" && !fresh;
+                        const open =
+                          editing?.id === r.id && editing.field === field;
+                        return (
+                          <span className="date" key={field}>
+                            {open ? (
+                              <input
+                                type="date"
+                                className="cell date-input"
+                                autoFocus
+                                aria-label={`${field === "start" ? "Inicio" : "Fin"} de ${t.name || "la actividad"}`}
+                                defaultValue={editing.value}
+                                onBlur={(e) => {
+                                  if (
+                                    e.target.value &&
+                                    e.target.value !== editing.value
+                                  )
+                                    (field === "start" ? setStart : setFinish)(
+                                      r.id,
+                                      e.target.value,
+                                    );
+                                  setEditing(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key !== "Enter" && e.key !== "Escape")
+                                    return;
+                                  e.preventDefault();
+                                  if (e.key === "Enter")
+                                    (e.target as HTMLInputElement).blur();
+                                  else {
+                                    // Cancel: nothing to commit if it blurs.
+                                    (e.target as HTMLInputElement).value =
+                                      editing.value;
+                                    setEditing(null);
+                                  }
+                                  // Back to the date cell, for the next edit.
+                                  requestAnimationFrame(() =>
+                                    document
+                                      .getElementById(`date-${r.id}-${field}`)
+                                      ?.focus(),
+                                  );
+                                }}
+                              />
+                            ) : (
+                              <button
+                                id={`date-${r.id}-${field}`}
+                                className="cell date-button"
+                                disabled={locked}
+                                aria-disabled={waiting || undefined}
+                                title={
+                                  value
+                                    ? `${longDate(value)}. ${
+                                        waiting
+                                          ? "Espera a que se recalculen las fechas."
+                                          : !locked
+                                            ? "Pulsa para cambiarla."
+                                            : isMilestone
+                                              ? "Un hito termina el mismo día que empieza."
+                                              : t.quantity
+                                                ? "La fija la duración calculada con cantidades."
+                                                : "La fija un vínculo «Termina cuando…»; cambia la duración."
+                                      }`
+                                    : undefined
+                                }
+                                aria-label={`${field === "start" ? "Inicio" : "Fin"} de ${t.name || "la actividad"}: ${value ? longDate(value) : "sin fecha"}`}
+                                onClick={() =>
+                                  !waiting &&
+                                  setEditing({ id: r.id, field, value })
+                                }
+                              >
+                                {!c
+                                  ? "—"
+                                  : field === "finish" && isMilestone
+                                    ? "Hito"
+                                    : cellDate(value)}
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
                       <span className="preds">
                         {t.links.map((l) => (
                           <span
@@ -1302,18 +1687,24 @@ export function Schedule({
                           aria-label={`Buscar predecesora de ${t.name || "la actividad"}`}
                           aria-invalid={!!cellError(r.id, "links") || undefined}
                           title={cellError(r.id, "links") || undefined}
-                          placeholder={
-                            t.links.length ? "+" : "Buscar predecesora…"
-                          }
+                          placeholder={t.links.length ? "+" : "Nº o nombre…"}
+                          defaultValue={typed[r.id]?.text}
                           onChange={(e) => {
+                            // A suggestion picked from the list is added at once.
                             const match = pickList.find(
-                              (o) => o.text === e.target.value && o.id !== r.id,
+                              (o) => o.text === e.target.value,
                             );
-                            if (match) {
-                              addLink(r.id, match.id);
-                              e.target.value = "";
+                            if (match) commitTyped(r.id, e.target);
+                            else if (typed[r.id])
+                              setTyped(({ [r.id]: _, ...rest }) => rest);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitTyped(r.id, e.currentTarget);
                             }
                           }}
+                          onBlur={(e) => commitTyped(r.id, e.currentTarget)}
                         />
                       </span>
                     </div>
@@ -1341,9 +1732,14 @@ export function Schedule({
                               "milestone" + (c.critical ? " critical" : "")
                             }
                             style={{ left: x(c.start, !!c.at_day_end) - 8 }}
-                            onClick={() =>
-                              setActive({ kind: "task", id: r.id })
-                            }
+                            title="Arrastra hasta otra barra para que empiece después de este hito"
+                            onPointerDown={(e) => startDrag(e, r.id)}
+                            onClick={() => {
+                              // Keyboard and assistive activation; a drag
+                              // that just ended must not also open details.
+                              if (!dragged.current)
+                                setActive({ kind: "task", id: r.id });
+                            }}
                             aria-label={`Hito ${t.name}: ${shortDate(c.start)}`}
                           />
                         ) : (
@@ -1356,9 +1752,14 @@ export function Schedule({
                                 x(c.finish, true) - x(c.start),
                               ),
                             }}
-                            onClick={() =>
-                              setActive({ kind: "task", id: r.id })
-                            }
+                            title="Arrastra hasta otra barra para que empiece cuando termine esta"
+                            onPointerDown={(e) => startDrag(e, r.id)}
+                            onClick={() => {
+                              // Keyboard and assistive activation; a drag
+                              // that just ended must not also open details.
+                              if (!dragged.current)
+                                setActive({ kind: "task", id: r.id });
+                            }}
                             aria-label={`${t.name}: ${shortDate(c.start)} a ${shortDate(c.finish)}`}
                           ></button>
                         ))}
@@ -1425,7 +1826,13 @@ export function Schedule({
                 names={names}
                 pickList={pickList}
                 problem={cellError(activeTask.id, "row")}
-                patch={(change) => patchTask(activeTask.id, change)}
+                patch={(change) => {
+                  // A duration set from the panel replaces any value
+                  // half-typed in the table cell.
+                  if ("duration" in change)
+                    setDurations(({ [activeTask.id]: _, ...rest }) => rest);
+                  patchTask(activeTask.id, change);
+                }}
                 addLink={(from) => addLink(activeTask.id, from)}
                 onMove={(step) => restructure(move(tree, activeTask.id, step))}
                 onDelete={() => removeTasks([activeTask.id])}
@@ -1681,7 +2088,9 @@ function TaskDetails({
               Fechas obligatorias <small>(opcional)</small>
             </h4>
             <p className="muted">
-              Úsalas solo si hay una fecha que no se puede mover.
+              Para mover una actividad basta con cambiar su Inicio o su Fin en
+              la tabla. Usa estas fechas solo si hay una que no se puede mover,
+              por ejemplo la llegada de un material o una entrega pactada.
             </p>
             <label>
               No empezar antes del
@@ -1723,6 +2132,63 @@ function TaskDetails({
             </label>
           </section>
 
+          {task.earliest &&
+            task.fixed_finish &&
+            !task.quantity &&
+            task.duration > 0 &&
+            // Only when nothing else moves the start: otherwise the span
+            // between the two dates is not the one the activity can use.
+            !task.links.length &&
+            task.earliest >= plan.start &&
+            task.fixed_finish >= task.earliest &&
+            workdays(
+              task.fixed_finish,
+              task.fixed_finish,
+              plan,
+              task.calendar,
+            ) > 0 &&
+            workdays(task.earliest, task.fixed_finish, plan, task.calendar) <=
+              3650 &&
+            Math.max(
+              1,
+              workdays(task.earliest, task.fixed_finish, plan, task.calendar),
+            ) !== task.duration && (
+              <p className="notice">
+                Del {shortDate(task.earliest)} al {shortDate(task.fixed_finish)}{" "}
+                hay{" "}
+                {days(
+                  Math.max(
+                    1,
+                    workdays(
+                      task.earliest,
+                      task.fixed_finish,
+                      plan,
+                      task.calendar,
+                    ),
+                  ),
+                )}{" "}
+                de trabajo, pero la actividad dura {days(task.duration)}.
+                <button
+                  onClick={() =>
+                    patch({
+                      duration: Math.max(
+                        1,
+                        workdays(
+                          task.earliest!,
+                          task.fixed_finish!,
+                          plan,
+                          task.calendar,
+                        ),
+                      ),
+                    })
+                  }
+                >
+                  Que dure del {shortDate(task.earliest)} al{" "}
+                  {shortDate(task.fixed_finish)}
+                </button>
+              </p>
+            )}
+
           <details className="details-card" open={!!task.calendar}>
             <summary>Días de trabajo de esta actividad</summary>
             <label>
@@ -1745,6 +2211,17 @@ function TaskDetails({
 
           <details className="details-card" open={!!task.quantity}>
             <summary>Calcular la duración con cantidades (opcional)</summary>
+            <p className="muted">
+              Si ya cuantificaste la obra, la app calcula cuántos días dura la
+              actividad: cantidad ÷ lo que avanza la cuadrilla por día. Por
+              ejemplo, 30 m³ de concreto a 5 m³ por día son 6 días.
+            </p>
+            {!sources.length && !task.quantity && (
+              <p className="details-empty">
+                Todavía no hay tablas cuantificadas en este proyecto. Prepáralas
+                en «Tablas de origen» y vuelve aquí.
+              </p>
+            )}
             <label>
               Origen de la duración
               <select
@@ -1765,7 +2242,7 @@ function TaskDetails({
                   })
                 }
               >
-                <option value="">Duración escrita a mano</option>
+                <option value="">No, escribo la duración en la tabla</option>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} · {s.mapping?.category}
