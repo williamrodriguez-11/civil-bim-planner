@@ -68,8 +68,8 @@ test("El espacio de trabajo se adapta y permite elegir el contenido del reporte"
   await download;
   await page.getByRole("button", { name: "Programación", exact: true }).click();
   await page.getByRole("button", { name: "Calendario y seguimiento", exact: true }).click();
-  await page.getByLabel("Fecha no laborable").fill("2026-12-25");
-  await page.getByRole("button", { name: "Añadir fecha", exact: true }).click();
-  await expect(page.getByLabel("Quitar fecha 2026-12-25")).toContainText("dic");
+  await page.getByLabel("Nuevo festivo").fill("2026-12-25");
+  await page.getByRole("button", { name: "Añadir festivo", exact: true }).click();
+  await expect(page.getByLabel("Quitar festivo 2026-12-25")).toContainText("dic");
   await page.screenshot({ path: info.outputPath("calendario.png") });
 });

@@ -95,23 +95,47 @@ Para desarrollar la interfaz con recarga automática, ejecuta `npm.cmd --prefix 
 3. Guarda la tabla y asigna sus campos. **Volumen de origen** lee la medición exportada. **Inventario** permite contar elementos y seleccionar mediciones disponibles de masa, longitud, área y volumen. Para una tabla mixta, indica el campo que contiene la categoría. **Dimensiones** aplica las geometrías descritas más abajo. Declara las unidades antes de calcular.
 4. Selecciona familia, tipo, material y resistencia cuando existan. En las opciones adicionales puedes conservar otros atributos, excluir registros por su fila, filtrar por campo y guardar una plantilla. El original se puede descargar incluso después de ajustar la importación.
 5. Consulta **Cuantificación** para revisar subtotales, detalle e incidencias. Una celda vacía señala una magnitud sin medir. En **Reportes**, elige tablas y secciones y genera un libro Excel. Los informes archivados siguen disponibles tras modificar la tabla.
-6. En **Programación**, define el inicio del proyecto, los días laborables y los festivos. Un código EDT como `1.2.1` crea una actividad dentro de una fase y un capítulo. Asigna sus nombres y configura duración, restricciones de fecha, predecesoras, desfases y porcentaje ejecutado.
-7. Puedes vincular una actividad a una tabla, una categoría y un nivel. Ingresa el rendimiento en unidades por día. La duración se obtiene redondeando hacia arriba el cociente entre la cantidad válida y el rendimiento. Una modificación incompatible con fechas fijas o mediciones vinculadas se rechaza y conserva la revisión anterior.
+6. En **Programación** fija la fecha de inicio y escribe o pega las actividades (ver abajo).
+7. Puedes vincular una actividad a una tabla, una categoría y un nivel desde su detalle. Ingresa el rendimiento en unidades por día: la duración es la cantidad válida dividida por el rendimiento, redondeada hacia arriba.
 
 Si dos ventanas modifican el mismo proyecto, la segunda recibe un aviso para actualizar los datos antes de guardar. Guardar en un proyecto no bloquea a los demás.
 
-### Seguimiento del cronograma
+### Programación en una sola pantalla
 
-El cronograma trabaja en días laborables enteros. La holgura se calcula recorriendo la red de precedencias hacia atrás. El avance planificado se distribuye linealmente entre las fechas de cada actividad y el indicador global pondera el avance real por duración.
+La tabla editable y el diagrama de Gantt comparten filas: desplazarse, seleccionar o plegar una fase afecta a ambos.
 
-La tabla de actividades y el Gantt comparten filas. Selecciona el nombre o la barra para editar. **Más columnas** muestra el porcentaje previsto, la holgura y la cantidad BIM. El buscador acepta nombres o códigos EDT; el filtro de ruta crítica y la escala permiten revisar la red.
+- **Cargar actividades:** escribe el nombre y la duración (días laborables; 0 crea un hito). Enter añade otra fila, Tab pasa de celda y las flechas cambian de fila. Puedes pegar varias filas copiadas de Excel (columnas *nombre* y *duración*; la fila de encabezados se omite).
+- **Fases y orden:** selecciona actividades (Mayús+clic selecciona un rango) y pulsa *Agrupar en fase* (por ejemplo «Cimentación», «Estructura», «Instalaciones») o *Encadenar* para vincularlas en orden con fin a comienzo. Los códigos EDT se renumeran solos.
+- **Predecesoras:** búscalas por nombre en la celda. Cada vínculo muestra su código y su significado: **FC** «Empieza cuando termine…», **CC** «Empieza cuando empiece…», **FF** «Termina cuando termine…», **CF** «Termina cuando empiece…».
+- **Detalle de la actividad:** relación y desfase de cada vínculo, calendario propio, restricciones, % completado y duración desde cantidades. También explica las fechas: qué predecesora o restricción manda y qué fines de semana o festivos la desplazaron o alargaron.
+- **Cálculo en vivo:** cada cambio se recalcula en el servidor sin guardarlo. Los errores aparecen en la celda o la fila; una dependencia circular nombra las actividades que la forman. *Guardar cronograma* lo almacena; el borrador sin guardar se conserva en la pestaña.
+- **Gantt:** barras con avance, fases, hitos, dependencias, ruta crítica, fines de semana y festivos sombreados y fecha de seguimiento. Escalas de días, semanas, meses o *Todo el cronograma*.
+- **Seguimiento:** *% completado* es el avance real registrado; *% previsto* es la parte de la duración transcurrida a la fecha de seguimiento (vacía = hoy). *Fijar línea base* guarda las fechas actuales para compararlas: barra gris y atraso o adelanto en días laborables.
+- **Exportación:** XML de Microsoft Project (MSPDI) con fases, hitos, calendarios, restricciones, vínculos, desfases, avance y línea base. Exporta lo guardado.
 
-- **% completado** es el porcentaje registrado por el usuario, entre 0 y 100. No se calcula a partir del tiempo transcurrido ni de la cantidad BIM.
-- **% previsto** es la proporción de días laborables transcurridos al cierre de la fecha de seguimiento, respecto de la duración vigente. No representa una línea base. En **Calendario y seguimiento** puede fijarse una fecha de corte; vacía utiliza la fecha actual del servidor.
-- **No comenzar antes del** establece el comienzo más temprano permitido. **Debe finalizar el** fija una fecha obligatoria de fin, que debe ser laborable y compatible con la duración y las dependencias.
-- Las relaciones se muestran en español: **FC** (FS), **CC** (SS), **FF** (FF) y **CF** (SF). Un desfase positivo espera días laborables; uno negativo adelanta el vínculo.
+### Reglas de programación
 
-El cronograma se exporta como XML de Microsoft Project (MSPDI), con ocho horas por jornada y la fecha de seguimiento cuando está fijada. Todavía no incluye recursos, nivelación, líneas base ni reprogramación del trabajo restante.
+El motor (`planner_api/planning.py`) programa «lo antes posible» desde el inicio del proyecto, en días laborables enteros, con el modelo de tiempo de Project: el final de un día laborable y el comienzo del siguiente son el mismo instante de trabajo. Cada regla tiene casos concretos en `tests_web/test_scheduling_rules.py`.
+
+| Regla | Comportamiento implementado |
+| --- | --- |
+| FC (FS) | La sucesora empieza el siguiente día laborable tras el fin de la predecesora. |
+| CC (SS), FF, CF (SF) | Comienzo ≥ comienzo; fin ≥ fin; fin ≥ comienzo de la predecesora. |
+| Desfases | En días laborables del calendario de la sucesora; negativos adelantan, sin empezar antes del inicio del proyecto. |
+| Hitos (duración 0) | Tras un FC quedan en la fecha de fin de la predecesora (17:00); su sucesora empieza el día laborable siguiente. |
+| Calendarios | Del proyecto o uno propio por actividad (días de trabajo y festivos, con o sin los del proyecto). |
+| Fases | Del primer inicio al último fin de sus actividades; duración en días laborables del proyecto; avance ponderado por duración. |
+| Holgura y ruta crítica | Holgura total contra el fin del proyecto; crítica si la holgura es 0 o menor. |
+| Restricciones | «No comenzar antes del» y «Debe finalizar el». |
+
+**Diferencias conocidas con Microsoft Project.** Los resultados no se compararon con Project de escritorio; estas diferencias están identificadas en el diseño:
+
+- Si «Debe finalizar el» es incompatible con las predecesoras, aquí se rechaza con un error; Project lo acepta y muestra holgura negativa.
+- Solo días laborables enteros: no hay horas, días transcurridos («ed») ni desfases en porcentaje.
+- No se vinculan fases (tareas resumen) entre sí; los vínculos son entre actividades.
+- Solo las dos restricciones anteriores; Project tiene ocho.
+- El avance real no reprograma el trabajo restante ni registra fechas reales.
+- Con calendarios distintos, el desfase se mide en el calendario de la sucesora. Es una decisión de diseño: no se verificó cómo lo hace Project.
 
 ## Métodos de cuantificación
 
@@ -153,7 +177,7 @@ npm.cmd run build
 ```
 
 - `tests/`: importación, formatos regionales, unidades, geometrías, exclusiones, duplicados y exportación.
-- `tests_web/`: API, cuentas y aislamiento entre ellas, límites de acceso, papelera y eliminación definitiva, espacio usado, reportes, cronograma y XML. Usan bases SQLite sintéticas.
+- `tests_web/`: API, cuentas y aislamiento entre ellas, límites de acceso, papelera y eliminación definitiva, espacio usado, reportes, cronograma y XML. Usan bases SQLite sintéticas. `test_scheduling_rules.py` reúne los casos de las reglas de programación.
 - `web/e2e/`: recorridos en navegador con Playwright.
 
 El XML se validó con el XSD del SDK de Microsoft Project y con MPXJ 16.10.0. Queda pendiente abrirlo directamente en Microsoft Project de escritorio.
@@ -164,7 +188,8 @@ El XML se validó con el XSD del SDK de Microsoft Project y con MPXJ 16.10.0. Qu
 - `planner_api/auth.py`: cuentas, sesiones y límites de acceso.
 - `planner_api/db.py` y `postgres.sql`: conexión a PostgreSQL o SQLite y esquema.
 - `planner_api/tables.py`, `models.py`: importación, validación de datos y cálculo.
-- `planner_api/planning.py`, `project_xml.py`: ruta crítica y exportación a Project.
+- `planner_api/planning.py`, `project_xml.py`: ruta crítica, fases, línea base y exportación a Project.
+- `web/src/Schedule.tsx`, `outline.ts`: pantalla de programación y estructura de fases.
 - `planner_api/social.py`: acceso con proveedores externos (desactivado en la interfaz).
 - `bim_planner/`: motor de cuantificación compartido.
 - `web/src/`: pantallas de la interfaz (`Overview`, `Tables`, `Schedule`, `Account`).

@@ -2,8 +2,10 @@
 
 from xml.etree import ElementTree as ET
 
+MORNING, EVENING = "08:00:00", "17:00:00"
 
-def project_xml(name, plan, tasks):
+
+def project_xml(name, plan, tasks, phases=()):
     root = ET.Element("Project", xmlns="http://schemas.microsoft.com/project/2007")
 
     def fields(parent, **values):
@@ -15,45 +17,68 @@ def project_xml(name, plan, tasks):
         SaveVersion=12,
         Name=name,
         ScheduleFromStart=1,
-        StartDate=f"{plan.start}T08:00:00",
+        StartDate=f"{plan.start}T{MORNING}",
         CurrencyCode="COP",
         CalendarUID=1,
-        DefaultStartTime="08:00:00",
-        DefaultFinishTime="17:00:00",
+        DefaultStartTime=MORNING,
+        DefaultFinishTime=EVENING,
         MinutesPerDay=480,
         MinutesPerWeek=480 * len(plan.weekdays),
         DurationFormat=7,
     )
     if plan.status_date:
-        fields(root, StatusDate=f"{plan.status_date}T17:00:00")
-    calendar = ET.SubElement(ET.SubElement(root, "Calendars"), "Calendar")
-    fields(
-        calendar, UID=1, Name="Calendario de obra", IsBaseCalendar=1, BaseCalendarUID=-1
-    )
-    weekdays = ET.SubElement(calendar, "WeekDays")
-    for i in range(1, 8):
-        work = (i + 5) % 7 in plan.weekdays
-        day = ET.SubElement(weekdays, "WeekDay")
-        fields(day, DayType=i, DayWorking=int(work))
-        if work:
-            times = ET.SubElement(day, "WorkingTimes")
-            for a, b in [("08:00:00", "12:00:00"), ("13:00:00", "17:00:00")]:
-                fields(ET.SubElement(times, "WorkingTime"), FromTime=a, ToTime=b)
-    if plan.holidays:
-        exceptions = ET.SubElement(calendar, "Exceptions")
-        for h in sorted(plan.holidays):
-            e = ET.SubElement(exceptions, "Exception")
-            fields(e, EnteredByOccurrences=0)
-            fields(
-                ET.SubElement(e, "TimePeriod"),
-                FromDate=f"{h}T00:00:00",
-                ToDate=f"{h}T23:59:00",
-            )
-            fields(e, Occurrences=1, Name="Día no laborable", Type=1, DayWorking=0)
+        fields(root, StatusDate=f"{plan.status_date}T{EVENING}")
+
+    calendars = ET.SubElement(root, "Calendars")
+    calendar_uid = {"": 1}
+
+    def calendar(uid, label, weekdays, holidays):
+        node = ET.SubElement(calendars, "Calendar")
+        fields(node, UID=uid, Name=label, IsBaseCalendar=1, BaseCalendarUID=-1)
+        days = ET.SubElement(node, "WeekDays")
+        for i in range(1, 8):
+            work = (i + 5) % 7 in weekdays
+            day = ET.SubElement(days, "WeekDay")
+            fields(day, DayType=i, DayWorking=int(work))
+            if work:
+                times = ET.SubElement(day, "WorkingTimes")
+                for a, b in [(MORNING, "12:00:00"), ("13:00:00", EVENING)]:
+                    fields(ET.SubElement(times, "WorkingTime"), FromTime=a, ToTime=b)
+        if holidays:
+            exceptions = ET.SubElement(node, "Exceptions")
+            for h in sorted(holidays):
+                e = ET.SubElement(exceptions, "Exception")
+                fields(e, EnteredByOccurrences=0)
+                fields(
+                    ET.SubElement(e, "TimePeriod"),
+                    FromDate=f"{h}T00:00:00",
+                    ToDate=f"{h}T23:59:00",
+                )
+                fields(e, Occurrences=1, Name="Día no laborable", Type=1, DayWorking=0)
+
+    calendar(1, "Calendario de obra", plan.weekdays, plan.holidays)
+    for uid, (label, c) in enumerate(sorted(plan.calendars.items()), 2):
+        calendar_uid[label] = uid
+        holidays = set(c.holidays) | (set(plan.holidays) if c.project_holidays else set())
+        calendar(uid, label, c.weekdays, holidays)
+
+    summaries = {p["code"]: p for p in phases}
     collection = ET.SubElement(root, "Tasks")
     group_uid = max((task["id"] for task in tasks), default=0)
     seen_groups = set()
     index = 0
+
+    def baseline(node, base, duration):
+        b = ET.SubElement(node, "Baseline")
+        fields(
+            b,
+            Number=0,
+            Start=f"{base['start']}T{EVENING if not duration and base.get('at_day_end') else MORNING}",
+            Finish=f"{base['finish']}T{EVENING if duration or base.get('at_day_end') else MORNING}",
+            Duration=f"PT{duration * 8}H0M0S",
+            DurationFormat=7,
+        )
+
     for task in tasks:
         parts = task["wbs"].split(".")
         for level in range(1, len(parts)):
@@ -62,17 +87,36 @@ def project_xml(name, plan, tasks):
                 seen_groups.add(code)
                 group_uid += 1
                 index += 1
+                node = ET.SubElement(collection, "Task")
                 fields(
-                    ET.SubElement(collection, "Task"),
+                    node,
                     UID=group_uid,
                     ID=index,
                     Name=plan.groups.get(code, "Grupo " + code),
                     WBS=code,
                     OutlineLevel=level,
-                    Summary=1,
                 )
+                # MSPDI fixes the order: dates, Summary, Critical, PercentComplete.
+                summary = summaries.get(code)
+                if summary:
+                    fields(
+                        node,
+                        Start=f"{summary['start']}T{MORNING}",
+                        Finish=f"{summary['finish']}T{EVENING}",
+                        Duration=f"PT{summary['duration'] * 8}H0M0S",
+                        DurationFormat=7,
+                    )
+                fields(node, Summary=1)
+                if summary:
+                    fields(
+                        node,
+                        Critical=int(summary["critical"]),
+                        PercentComplete=round(summary["progress"]),
+                    )
         index += 1
         t = ET.SubElement(collection, "Task")
+        milestone = task["duration"] == 0
+        at = EVENING if task.get("at_day_end") else MORNING
         fields(
             t,
             UID=task["id"],
@@ -82,19 +126,26 @@ def project_xml(name, plan, tasks):
             IsNull=0,
             WBS=task["wbs"],
             OutlineLevel=len(parts),
-            Start=task["start"] + "T08:00:00",
-            Finish=task["finish"] + "T17:00:00",
+            Start=task["start"] + "T" + (at if milestone else MORNING),
+            Finish=task["finish"] + "T" + (at if milestone else EVENING),
             Duration=f"PT{task['duration'] * 8}H0M0S",
             DurationFormat=7,
+            Milestone=int(milestone),
             Critical=int(task["critical"]),
             PercentComplete=round(task["progress"]),
         )
+        # MSPDI order: ConstraintType, CalendarUID, ConstraintDate.
+        constraint = None
         if task.get("fixed_finish"):
-            fields(
-                t, ConstraintType=3, ConstraintDate=task["fixed_finish"] + "T17:00:00"
-            )
+            constraint = (3, task["fixed_finish"] + "T" + EVENING)
         elif task["earliest"]:
-            fields(t, ConstraintType=4, ConstraintDate=task["earliest"] + "T08:00:00")
+            constraint = (4, task["earliest"] + "T" + MORNING)
+        if constraint:
+            fields(t, ConstraintType=constraint[0])
+        if task.get("calendar"):
+            fields(t, CalendarUID=calendar_uid[task["calendar"]])
+        if constraint:
+            fields(t, ConstraintDate=constraint[1])
         for link in task["links"]:
             fields(
                 ET.SubElement(t, "PredecessorLink"),
@@ -104,4 +155,6 @@ def project_xml(name, plan, tasks):
                 LinkLag=link["lag"] * 4800,
                 LagFormat=7,
             )
+        if task.get("baseline"):
+            baseline(t, task["baseline"], task["baseline"]["duration"])
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)

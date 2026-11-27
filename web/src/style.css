@@ -1660,3 +1660,564 @@ button.danger:hover {
   flex: 1 1 200px;
   max-width: 340px;
 }
+/* ===== Programación: table + Gantt on one screen ===== */
+.planner {
+  --critical: #b5532a;
+  --bar: #2f7a5d;
+  --bar-progress: #164c38;
+  --phase: #26372f;
+  --link-color: #7d948a;
+  --row-h: 38px;
+  display: grid;
+  gap: 12px;
+}
+:root[data-theme="dark"] .planner {
+  --critical: #f0a27c;
+  --bar: #4fa57f;
+  --bar-progress: #cfeb9e;
+  --phase: #d4e3d9;
+  --link-color: #8ea79b;
+}
+.planner-top,
+.planner-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.planner-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.planner-save {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.planner-save .unsaved {
+  color: var(--critical);
+  font-size: 13px;
+  font-weight: 600;
+}
+.planner-save .saved {
+  color: var(--green);
+  font-size: 13px;
+}
+.planner-toolbar {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--soft);
+}
+.planner-toolbar button,
+.planner-toolbar .btn {
+  padding: 7px 11px;
+}
+.planner-toolbar .btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.planner-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+}
+.planner-count {
+  font-size: 13px;
+  color: var(--muted);
+}
+.planner-scale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.phase-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.phase-form input {
+  width: 180px;
+}
+.planner-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.planner-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+/* Details beside the grid only on very wide screens; below it otherwise,
+   so the Gantt keeps its width. */
+@media (min-width: 1700px) {
+  .planner-body.with-details {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+.planner-scroll {
+  position: relative;
+  overflow: auto;
+  max-height: min(70vh, 760px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.planner-canvas {
+  position: relative;
+}
+.planner-row {
+  position: relative;
+  display: flex;
+  height: var(--row-h);
+  border-bottom: 1px solid var(--border);
+}
+.planner-head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--soft);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.planner-cells {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  flex: 0 0 var(--table-w);
+  width: var(--table-w);
+  display: grid;
+  grid-template-columns: 28px 42px minmax(130px, 1fr) 44px 54px 54px minmax(190px, 1.5fr);
+  align-items: center;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+.planner-head .planner-cells {
+  background: var(--soft);
+  height: 100%;
+}
+.planner-cells > span {
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.planner-cells .wbs {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.planner-cells .name {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.planner-cells .num {
+  text-align: right;
+}
+.planner-cells .date {
+  font-size: 12px;
+  color: var(--muted);
+}
+.planner .cell {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.planner .cell:hover {
+  border-color: var(--border);
+}
+.planner .cell:focus {
+  border-color: var(--focus);
+  background: var(--surface);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 30%, transparent);
+}
+.planner .cell[aria-invalid="true"] {
+  border-color: #b3261e;
+  background: #fdecea;
+}
+:root[data-theme="dark"] .planner .cell[aria-invalid="true"] {
+  background: #4a1f1c;
+}
+.planner-cells .num .cell {
+  text-align: right;
+}
+.planner-row.phase .planner-cells {
+  font-weight: 650;
+  background: var(--soft);
+}
+.planner-row.phase .cell {
+  font-weight: 650;
+}
+.fold {
+  padding: 2px;
+  border: 0;
+  background: none;
+}
+.milestone-icon {
+  flex-shrink: 0;
+  color: var(--phase);
+}
+.planner-row.selected .planner-cells {
+  background: color-mix(in srgb, var(--green) 10%, var(--surface));
+}
+.planner-row.active .planner-cells,
+.planner-row.active .planner-track {
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.planner-row.active .planner-track {
+  background: color-mix(in srgb, var(--green) 7%, transparent);
+}
+.planner-row.has-error .planner-cells {
+  box-shadow: inset 3px 0 0 #b3261e;
+}
+.row-error {
+  position: absolute;
+  right: 8px;
+  bottom: 1px;
+  z-index: 5;
+  margin: 0;
+  font-size: 11px;
+  color: #b3261e;
+  pointer-events: none;
+}
+.preds {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pred-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px 4px 2px 6px;
+  border-radius: 6px;
+  background: var(--soft);
+  font-size: 11px;
+}
+.pred-chip b {
+  color: var(--green);
+}
+.pred-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.15;
+}
+.pred-text small,
+.pred-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pred-text small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.pred-text strong {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.pred-chip button {
+  padding: 1px;
+  border: 0;
+  background: none;
+}
+.pred-search {
+  flex: 1 0 34px;
+  min-width: 34px;
+}
+.preds:not(:has(.pred-chip)) .pred-search {
+  flex-basis: 100%;
+}
+.planner-axis,
+.planner-track {
+  position: relative;
+  flex: 0 0 auto;
+}
+.axis-top,
+.axis-bottom {
+  position: absolute;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.axis-top {
+  top: 5px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  color: var(--ink);
+}
+.axis-bottom {
+  bottom: 5px;
+  padding-left: 3px;
+  font-weight: 500;
+}
+.axis-bottom.off {
+  color: var(--critical);
+}
+.planner-rows {
+  position: relative;
+}
+.planner-shade,
+.planner-links {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+}
+.planner-shade {
+  bottom: 0;
+  z-index: 0;
+}
+.planner-shade i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--muted) 9%, transparent);
+}
+.status-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #c2410c;
+}
+.planner-links {
+  z-index: 3;
+  overflow: visible;
+}
+.planner-links path {
+  fill: none;
+  stroke: var(--link-color);
+  stroke-width: 1.4;
+}
+.planner-links path.critical {
+  stroke: var(--critical);
+}
+.planner-track .bar,
+.planner-track .milestone,
+.baseline-bar {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+}
+.planner-track .bar {
+  top: 9px;
+  height: 18px;
+  z-index: 2;
+  overflow: hidden;
+  background: var(--bar);
+}
+.planner-track .bar i {
+  display: block;
+  height: 100%;
+  background: var(--bar-progress);
+}
+.planner-track .bar.critical {
+  background: var(--critical);
+}
+.planner-track .bar.critical i {
+  background: #7c2d12;
+}
+.planner-track .phase-bar {
+  top: 12px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--phase);
+}
+.planner-track .phase-bar i {
+  background: #6b8f7c;
+}
+.planner-track .milestone {
+  top: 11px;
+  width: 16px;
+  height: 16px;
+  z-index: 2;
+  border-radius: 2px;
+  background: var(--phase);
+  transform: rotate(45deg);
+}
+.planner-track .milestone.critical {
+  background: var(--critical);
+}
+.baseline-bar {
+  top: 29px;
+  height: 5px;
+  background: #a5b1aa;
+}
+.planner-track button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.planner-details {
+  position: relative;
+  color: var(--ink);
+  max-height: min(70vh, 760px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.planner-details .close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 5px;
+}
+.details-body {
+  display: grid;
+  gap: 10px;
+}
+.details-body h3 {
+  padding-right: 30px;
+  font-size: 18px;
+}
+.details-body h4 {
+  margin: 8px 0 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.details-body label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.details-body .eyebrow {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--green);
+}
+.details-dates {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.details-dates div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 8px;
+}
+.details-dates dt {
+  color: var(--muted);
+}
+.details-dates dd {
+  margin: 0;
+}
+.critical-tag {
+  color: var(--critical);
+}
+.details-why {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--soft);
+  font-size: 13px;
+}
+.details-why h4 {
+  margin: 0;
+}
+.details-link {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.details-link small,
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.planner-legend .key-bar {
+  background: #2f7a5d;
+}
+.planner-legend .key-phase {
+  background: #26372f;
+  height: 6px;
+}
+.planner-legend .key-milestone {
+  width: 10px;
+  height: 10px;
+  background: #26372f;
+  transform: rotate(45deg);
+}
+.planner-legend .key-baseline {
+  height: 5px;
+  background: #a5b1aa;
+}
+.calendar-extra {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+@media (max-width: 1699px) {
+  .planner-details {
+    max-height: none;
+  }
+  .planner-details .details-body {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    align-items: start;
+  }
+  .planner-details .details-body > :is(.eyebrow, h3, h4, .details-why, .details-actions, .error) {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 760px) {
+  .planner-cells {
+    grid-template-columns: 28px 34px minmax(120px, 1fr) 54px 0 0 minmax(90px, 0.8fr);
+  }
+  .planner-cells > span:nth-child(5),
+  .planner-cells > span:nth-child(6) {
+    padding: 0;
+  }
+  .planner-save {
+    margin-left: 0;
+  }
+}
+.planner-legend .key-critical {
+  background: #b5532a;
+}
+.planner-legend .key-progress {
+  background: #164c38;
+}
+.planner-legend .key-status {
+  width: 2px;
+  background: #c2410c;
+  border: 0;
+}
+
+/* On a phone the activity pane would cover the whole Gantt: let it scroll. */
+.planner-scroll.narrow .planner-cells {
+  position: relative;
+}

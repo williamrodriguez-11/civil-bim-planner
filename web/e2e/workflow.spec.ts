@@ -67,17 +67,22 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await expect(page.getByRole("button", { name: "Detalle", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("cell", { name: "12,5", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Programación", exact: true }).click();
-  await page.getByRole("button", { name: "Actividad", exact: true }).click();
-  await page.getByLabel("Nombre de la actividad").fill("Hormigonar pilotes");
-  await page.getByLabel("Código EDT").fill("1.1");
-  await page.getByLabel("Fase 1").fill("Cimentación");
-  await page.getByText("Calcular días con las cantidades de la tabla", { exact: true }).click();
+  await page.getByLabel("Primera actividad").fill("Hormigonar pilotes");
+  await page.getByLabel("Seleccionar Hormigonar pilotes").click();
+  await page.getByRole("button", { name: "Agrupar en fase" }).click();
+  await page.getByLabel("Nombre de la nueva fase").fill("Cimentación");
+  await page.getByRole("button", { name: "Crear fase" }).click();
+  await expect(page.getByLabel("Nombre de la fase 1")).toHaveValue("Cimentación");
+  await page.getByLabel("Nombre de la actividad 1.1").focus();
   await page.getByLabel("Origen de la duración").selectOption({ index: 1 });
   await page.getByLabel("Rendimiento").fill("5");
-  await page.getByRole("button", { name: "Guardar actividad" }).click();
-  await expect(page.getByText("1 · Cimentación")).toBeVisible();
-  await page.getByLabel("Más columnas").check();
-  await expect(page.getByRole("cell", { name: "15 m³" })).toBeVisible();
+  // 15 m³ at 5 m³ per day: 3 working days, computed by the server.
+  await expect(page.locator(".planner-details .notice")).toContainText("15 m³");
+  await expect(
+    page.getByLabel("Duración en días laborables de Hormigonar pilotes"),
+  ).toHaveValue("3");
+  await page.getByRole("button", { name: "Guardar cronograma" }).click();
+  await expect(page.getByText("Cronograma guardado.")).toBeVisible();
   await page.getByRole("button", { name: "Reportes", exact: true }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Generar Excel" }).click();

@@ -75,6 +75,8 @@ export interface Task {
   fixed_finish?: string | null;
   progress: number;
   links: Link[];
+  /** Name of one of the plan's calendars; empty = project calendar. */
+  calendar?: string;
   quantity: null | {
     table: number;
     unit: string;
@@ -90,6 +92,26 @@ export interface Plan {
   holidays: string[];
   tasks: Task[];
   groups: Record<string, string>;
+  calendars?: Record<string, WorkCalendar>;
+  baseline?: Record<
+    string,
+    { start: string; finish: string; duration: number; at_day_end?: boolean }
+  >;
+  baseline_saved?: string | null;
+}
+export interface WorkCalendar {
+  weekdays: number[];
+  holidays: string[];
+  project_holidays: boolean;
+}
+export type Driver =
+  | { type: "start" }
+  | { type: "earliest"; date: string }
+  | { type: "fixed_finish"; date: string }
+  | { type: "link"; predecessor: number; relation: string; lag: number };
+export interface DayNote {
+  date: string;
+  kind: "festivo" | "no laborable";
 }
 export interface Scheduled extends Task {
   start: string;
@@ -98,6 +120,39 @@ export interface Scheduled extends Task {
   slack: number;
   planned: number;
   amount: number | null;
+  milestone?: boolean;
+  at_day_end?: boolean;
+  late_start?: string;
+  late_finish?: string;
+  driver?: Driver;
+  shifted?: DayNote[];
+  spanned?: DayNote[];
+  baseline?: {
+    start: string;
+    finish: string;
+    duration: number;
+    start_variance: number;
+    finish_variance: number;
+  };
+}
+export interface Phase {
+  code: string;
+  name: string;
+  start: string;
+  finish: string;
+  duration: number;
+  progress: number;
+  planned: number;
+  slack: number;
+  critical: boolean;
+  tasks: number;
+  baseline?: { start: string; finish: string };
+}
+/** Which activity and field a scheduling error belongs to. */
+export interface ErrorInfo {
+  task: number | null;
+  field: string | null;
+  cycle: number[];
 }
 export interface State {
   project: Project;
@@ -105,12 +160,21 @@ export interface State {
   trashed_tables: Pick<Source, "id" | "name" | "sheet">[];
   templates: Record<string, Mapping>;
   results: Record<number, { detail: Row[]; issues: Row[] }>;
-  issue_review?: Record<number, {
-    pending: number[];
-    history: { id: string; row: Row; archived_at: string; current: boolean }[];
-  }>;
+  issue_review?: Record<
+    number,
+    {
+      pending: number[];
+      history: {
+        id: string;
+        row: Row;
+        archived_at: string;
+        current: boolean;
+      }[];
+    }
+  >;
   plan: Plan;
   schedule: Scheduled[];
+  phases?: Phase[];
   events: { message: string; created: string }[];
   reports: { id: number; created: string; name: string }[];
 }
@@ -134,17 +198,20 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       window.dispatchEvent(new Event("civil-session-expired"));
     }
     const data = await res.json().catch(() => ({}));
-    throw new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : Array.isArray(data.detail)
+    throw Object.assign(
+      new Error(
+        typeof data.detail === "string"
           ? data.detail
-              .map(
-                (x: { loc: unknown[]; msg: string }) =>
-                  x.loc.join(".") + " · " + x.msg,
-              )
-              .join(" / ")
-          : "No se pudo completar la operación.",
+          : Array.isArray(data.detail)
+            ? data.detail
+                .map(
+                  (x: { loc: unknown[]; msg: string }) =>
+                    x.loc.join(".") + " · " + x.msg,
+                )
+                .join(" / ")
+            : "No se pudo completar la operación.",
+      ),
+      { info: data.error as ErrorInfo | undefined },
     );
   }
   return res.json();
@@ -154,9 +221,11 @@ export const cleanError = (e: unknown) =>
 export const details = (s: State | null) =>
   Object.values(s?.results ?? {}).flatMap((x) => x.detail);
 export const issues = (s: State | null) =>
-  Object.entries(s?.results ?? {}).flatMap(([id, result]) =>
-    s?.issue_review?.[Number(id)]?.pending.map((index) => result.issues[index]) ??
-    result.issues,
+  Object.entries(s?.results ?? {}).flatMap(
+    ([id, result]) =>
+      s?.issue_review?.[Number(id)]?.pending.map(
+        (index) => result.issues[index],
+      ) ?? result.issues,
   );
 export interface Usage {
   total: number;

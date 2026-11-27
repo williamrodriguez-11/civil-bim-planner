@@ -97,12 +97,30 @@ class Task(Input):
     id: int = Field(gt=0)
     name: Name
     wbs: str = Field(pattern=r"^[1-9]\d*(\.[1-9]\d*)*$", max_length=80)
-    duration: int = Field(1, ge=1, le=3650)
+    # Working days; 0 makes the activity a milestone.
+    duration: int = Field(1, ge=0, le=3650)
     earliest: date | None = None
     fixed_finish: date | None = None
     progress: float = Field(0, ge=0, le=100)
     links: list[Link] = []
     quantity: QuantityLink | None = None
+    # Name of one of the plan's calendars; empty uses the project calendar.
+    calendar: str = Field("", max_length=160)
+
+
+class WorkCalendar(Input):
+    weekdays: set[int] = Field(min_length=1)
+    holidays: set[date] = set()
+    # Also skip the project's holidays.
+    project_holidays: bool = True
+
+
+class BaselineTask(Input):
+    start: date
+    finish: date
+    duration: int = Field(ge=0)
+    # A milestone captured at the end of its day (17:00).
+    at_day_end: bool = False
 
 
 class Plan(Input):
@@ -112,3 +130,7 @@ class Plan(Input):
     holidays: set[date] = set()
     tasks: list[Task] = Field(default_factory=list, max_length=2000)
     groups: dict[str, Name] = {}
+    calendars: dict[Name, WorkCalendar] = {}
+    # Saved copy of the planned dates, keyed by task id.
+    baseline: dict[int, BaselineTask] = {}
+    baseline_saved: date | None = None
