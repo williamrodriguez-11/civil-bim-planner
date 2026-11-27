@@ -245,8 +245,12 @@ test("Como en Project: fechas en la tabla, predecesoras por número y enlazar ar
   await own.fill("9");
   await own.press("Enter");
   await expect(own).toHaveAttribute("aria-invalid", "true");
-  await own.fill("");
-  await own.press("Enter");
+  // The red cell can be cleared with its button.
+  await page
+    .getByRole("button", { name: "Borrar la predecesora escrita en Columnas" })
+    .click();
+  await expect(own).toHaveValue("");
+  await expect(own).not.toHaveAttribute("aria-invalid", "true");
 
   // Drag from the «Zapatas» bar onto the «Columnas» row to link them.
   const from = row.locator(".bar");
@@ -285,8 +289,6 @@ test("Como en Project: fechas en la tabla, predecesoras por número y enlazar ar
     ),
   ).toBeVisible();
   await expect(date("Inicio", "Zapatas")).toHaveText("24 nov");
-  await page
-    .getByRole("button", { name: /Quitar el vínculo con/ })
-    .click();
+  await page.getByRole("button", { name: /Quitar el vínculo con/ }).click();
   await expect(date("Inicio", "Zapatas")).toHaveText("20 nov");
 });

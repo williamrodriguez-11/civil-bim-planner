@@ -20,6 +20,7 @@ import {
   Ruler,
   Sun,
   Trash2,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import "@fontsource-variable/inter";
 import "./style.css";
@@ -41,6 +42,7 @@ import { Schedule } from "./Schedule";
 import { Tables } from "./Tables";
 import { Account } from "./Account";
 import { Trash } from "./Trash";
+import { Settings } from "./Settings";
 
 const modules = [
   { name: "Resumen", I: LayoutDashboard },
@@ -61,6 +63,7 @@ const description: Record<Page, string> = {
   Reportes: "Genera y consulta entregables técnicos del proyecto.",
   Papelera:
     "Recupera lo que borraste o elimínalo para siempre y libera espacio.",
+  Configuración: "Los datos de tu cuenta y tu contraseña.",
 };
 type Fields = Pick<
   Project,
@@ -342,11 +345,7 @@ function Reports({ state, mutate }: { state: State; mutate: Mutation }) {
             </p>
           )}
           <div className="actions">
-            <button
-              autoFocus
-              disabled={busy}
-              onClick={() => setToRemove(null)}
-            >
+            <button autoFocus disabled={busy} onClick={() => setToRemove(null)}>
               Cancelar
             </button>
             <button
@@ -643,6 +642,15 @@ function App({
             <i /> {username}
           </div>
           <button
+            className={"nav " + (page === "Configuración" ? "selected" : "")}
+            title="Configuración"
+            aria-current={page === "Configuración" ? "page" : undefined}
+            onClick={() => go("Configuración")}
+          >
+            <SettingsIcon size={18} />
+            <span>Configuración</span>
+          </button>
+          <button
             onClick={() => logout().catch((e) => setError(cleanError(e)))}
           >
             Cerrar sesión
@@ -702,9 +710,11 @@ function App({
                 <i />
                 {page === "Resumen"
                   ? "CENTRO DE CONTROL"
-                  : page === "Proyectos" || page === "Papelera"
-                    ? "ESPACIO DE TRABAJO"
-                    : "MÓDULO DE PROYECTO"}
+                  : page === "Configuración"
+                    ? "TU CUENTA"
+                    : page === "Proyectos" || page === "Papelera"
+                      ? "ESPACIO DE TRABAJO"
+                      : "MÓDULO DE PROYECTO"}
               </div>
               <h1>{page === "Resumen" ? "Resumen general" : page}</h1>
               <p>{description[page]}</p>
@@ -729,6 +739,8 @@ function App({
               create={() => setForm("new")}
               mutate={mutate}
             />
+          ) : page === "Configuración" ? (
+            <Settings />
           ) : page === "Papelera" ? (
             <>
               {notice && (
@@ -836,10 +848,17 @@ function App({
                   state={state}
                   mutate={mutate}
                   openTrash={() => go("Papelera")}
-                  viewQuantities={(tab, tableId) => go("Cuantificación", tab, tableId)}
+                  viewQuantities={(tab, tableId) =>
+                    go("Cuantificación", tab, tableId)
+                  }
                 />
               ) : page === "Cuantificación" ? (
-                <Quantities state={state} initialTab={quantityTab} initialTableId={quantityTableId} mutate={mutate} />
+                <Quantities
+                  state={state}
+                  initialTab={quantityTab}
+                  initialTableId={quantityTableId}
+                  mutate={mutate}
+                />
               ) : page === "Programación" ? (
                 <Schedule state={state} mutate={mutate} />
               ) : (
@@ -879,7 +898,10 @@ function App({
                 ¿Eliminar <strong>«{toPurge[0].name}»</strong> para siempre?
               </>
             ) : (
-              <>¿Eliminar para siempre los {toPurge.length} proyectos de la papelera?</>
+              <>
+                ¿Eliminar para siempre los {toPurge.length} proyectos de la
+                papelera?
+              </>
             )}{" "}
             Se borrarán sus tablas, archivos originales, cronograma y reportes.{" "}
             <strong>No se puede deshacer.</strong>

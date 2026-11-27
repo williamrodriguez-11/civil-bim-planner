@@ -1834,9 +1834,35 @@ export function Schedule({
                               e.preventDefault();
                               commitTyped(r.id, e.currentTarget);
                             }
+                            // Escape throws away what was typed.
+                            if (e.key === "Escape" && e.currentTarget.value) {
+                              e.preventDefault();
+                              e.currentTarget.value = "";
+                              setTyped(({ [r.id]: _, ...rest }) => rest);
+                            }
                           }}
                           onBlur={(e) => commitTyped(r.id, e.currentTarget)}
                         />
+                        {typed[r.id] && (
+                          <button
+                            type="button"
+                            className="pred-clear"
+                            title="Borrar lo escrito"
+                            aria-label={`Borrar la predecesora escrita en ${t.name || "la actividad"}`}
+                            // Before the field's blur commits the text again.
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              const field = document.getElementById(
+                                `cell-${r.id}-links`,
+                              ) as HTMLInputElement | null;
+                              if (field) field.value = "";
+                              setTyped(({ [r.id]: _, ...rest }) => rest);
+                              field?.focus();
+                            }}
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
                       </span>
                     </div>
                     <div
