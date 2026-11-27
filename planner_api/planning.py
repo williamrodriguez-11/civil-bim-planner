@@ -294,7 +294,9 @@ def schedule(plan: Plan, sources, today=None):
                     "fixed_finish",
                 )
             fixed = c.work((t.fixed_finish, 1)) - d
-            if fixed < s:
+            # For a milestone the instant matters too (Friday 17:00 is
+            # before an earliest date of Monday 08:00).
+            if fixed < s or (d == 0 and fixed == s and at(fixed, True) < point):
                 raise ScheduleError(
                     f"{t.name}: la duración, el inicio o las predecesoras impiden "
                     "finalizar en esa fecha.",
@@ -325,17 +327,27 @@ def schedule(plan: Plan, sources, today=None):
         lf = finish_w[i] if t.fixed_finish else c.work(end)
         for s, link in successors[i]:
             cs = cal[s]
-            # The successor's bound, as the latest instant with that working
-            # time (start of its next working day), so the predecessor keeps
-            # days its own calendar works and the successor's does not.
-            if link.relation in ("FS", "SS"):
-                bound = cs.start_point(max(late_start[s] - link.lag, 0))
+            to_start = link.relation in ("FS", "SS")
+            late = late_start[s] if to_start else late_finish[s]
+            if cs is c:
+                # Same calendar: working time maps directly.
+                bound_w = late - link.lag
             else:
-                bound = cs.start_point(max(late_finish[s] - link.lag, 0))
+                tight = link.lag == 0 and late == (start_w[s] if to_start else finish_w[s])
+                if tight:
+                    # Use the successor's actual instant (e.g. a milestone
+                    # fixed at 17:00), not an equivalent one next morning.
+                    bound = start_pt[s] if to_start else finish_pt[s]
+                else:
+                    # The latest instant with that working time (start of its
+                    # next working day), so the predecessor keeps days its
+                    # own calendar works and the successor's does not.
+                    bound = cs.start_point(max(late - link.lag, 0))
+                bound_w = c.work(bound)
             if link.relation in ("FS", "FF"):
-                lf = min(lf, c.work(bound))
+                lf = min(lf, bound_w)
             else:
-                lf = min(lf, c.work(bound) + d)
+                lf = min(lf, bound_w + d)
         lf = max(lf, finish_w[i])
         late_finish[i], late_start[i] = lf, lf - d
 

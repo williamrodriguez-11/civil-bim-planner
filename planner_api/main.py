@@ -768,9 +768,14 @@ def assign(
 @project_routes.post("/plan/preview")
 def preview_plan(pid: int, plan: Plan):
     """Compute a draft schedule without saving it (live editing)."""
+    linked = sorted({t.quantity.table for t in plan.tasks if t.quantity})
     with connect() as db:
         project(db, pid)
-        return timeline(plan, results(db, pid))
+        # Only the tables that durations depend on are read.
+        data = (
+            {i: r for i, r in results(db, pid).items() if i in linked} if linked else {}
+        )
+        return timeline(plan, data)
 
 
 @project_routes.put("/plan")

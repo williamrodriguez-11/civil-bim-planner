@@ -187,4 +187,13 @@ test("Enter añade filas, Tab pasa de celda y el seguimiento compara el avance",
   ]);
   expect(saved.schedule[0].progress).toBe(25);
   expect(saved.schedule[0].planned).toBe(50);
+  // Clearing a saved activity's name is an error, not a silent delete.
+  const name = page.getByLabel("Nombre de la actividad 1", { exact: true });
+  await name.fill("");
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(
+    page.getByRole("button", { name: "Guardar cronograma" }),
+  ).toBeDisabled();
+  await name.fill("Replanteo");
+  await expect(name).not.toHaveAttribute("aria-invalid", "true");
 });

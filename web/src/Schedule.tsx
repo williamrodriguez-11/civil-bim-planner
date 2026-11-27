@@ -183,18 +183,24 @@ export function Schedule({
   const pid = state.project.id;
   const storeKey = `civil-plan-draft:${pid}`;
   // An unsaved draft survives a module change or a reload in this tab.
-  const restored = useMemo(() => {
+  const stored = useMemo(() => {
     try {
-      const saved = JSON.parse(sessionStorage.getItem(storeKey) ?? "null");
-      return saved?.revision === state.project.revision
-        ? (saved.plan as Plan)
-        : null;
+      return JSON.parse(sessionStorage.getItem(storeKey) ?? "null") as {
+        revision: number;
+        plan: Plan;
+      } | null;
     } catch {
       return null;
     }
     // Only on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const restored =
+    stored?.revision === state.project.revision ? stored.plan : null;
+  // A draft from before another change in the project: offer to recover it.
+  const [stale, setStale] = useState<Plan | null>(
+    stored && !restored ? stored.plan : null,
+  );
   const [draft, setDraftState] = useState<Plan>(restored ?? state.plan);
   const [dirty, setDirty] = useState(!!restored);
   const [timeline, setTimeline] = useState<Timeline>({
@@ -252,10 +258,18 @@ export function Schedule({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  const saved = useMemo(
+    () => new Set(state.plan.tasks.map((t) => t.id)),
+    [state.plan.tasks],
+  );
   // Durations typed but not valid yet stay in the cell and block the preview.
   const localErrors = useMemo(() => {
     const errors: Record<number, Record<string, string>> = {};
     const present = new Set(draft.tasks.map((t) => t.id));
+    // Saved activities keep their name: clearing it is an error, not a delete.
+    for (const t of draft.tasks)
+      if (saved.has(t.id) && !t.name.trim())
+        errors[t.id] = { name: "Escribe un nombre o elimina la actividad." };
     for (const [id, raw] of Object.entries(durations))
       if (!present.has(+id)) continue;
       else if (!/^\d{1,4}$/.test(raw.trim()) || Number(raw) > 3650)
@@ -263,7 +277,7 @@ export function Schedule({
           duration: "Escribe días laborables enteros (0 para un hito).",
         };
     return errors;
-  }, [durations, draft.tasks]);
+  }, [durations, draft.tasks, saved]);
 
   // Live recalculation of the draft on the server, without saving it.
   useEffect(() => {
@@ -861,6 +875,31 @@ export function Schedule({
         </a>
       </div>
 
+      {stale && (
+        <div className="notice planner-problem" role="status">
+          Hay cambios sin guardar de una sesión anterior en este cronograma.
+          <button
+            onClick={() => {
+              setDraft(stale);
+              setStale(null);
+            }}
+          >
+            Recuperar cambios
+          </button>
+          <button
+            onClick={() => {
+              try {
+                sessionStorage.removeItem(storeKey);
+              } catch {
+                // Nothing to clean.
+              }
+              setStale(null);
+            }}
+          >
+            Descartar
+          </button>
+        </div>
+      )}
       {problem && (
         <div className="error planner-problem" role="alert">
           {problem.message}

@@ -284,6 +284,27 @@ class MoreEdgeCases(unittest.TestCase):
         self.assertEqual((rows[1]["late_start"], rows[1]["late_finish"]), ("2026-11-06",) * 2)
 
 
+class FixedMilestones(unittest.TestCase):
+    def test_fixed_milestone_before_its_earliest_date_is_rejected(self):
+        with self.assertRaises(ScheduleError) as caught:
+            run(plan(task(1, "1", 0, earliest="2026-11-09", fixed_finish="2026-11-06")))
+        self.assertEqual(caught.exception.field, "fixed_finish")
+
+    def test_fixed_milestone_bounds_a_seven_day_predecessor(self):
+        rows = run(
+            plan(
+                task(1, "1", 5, calendar="7 días"),
+                task(2, "2", 0, (1, "FS", 0), fixed_finish="2026-11-06"),
+                task(3, "3", 10),
+                calendars={"7 días": {"weekdays": list(range(7))}},
+            )
+        )
+        # The task ends Friday; finishing on the weekend would miss the
+        # milestone fixed at Friday 17:00, so it has no slack.
+        self.assertEqual(rows[1]["finish"], "2026-11-06")
+        self.assertEqual(rows[1]["slack"], 0)
+
+
 class Export(unittest.TestCase):
     def test_xml_keeps_milestones_calendars_baseline_and_phases(self):
         from xml.etree import ElementTree as ET
