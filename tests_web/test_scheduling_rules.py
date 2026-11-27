@@ -305,6 +305,34 @@ class FixedMilestones(unittest.TestCase):
         self.assertEqual(rows[1]["slack"], 0)
 
 
+class FinishLinksAcrossCalendars(unittest.TestCase):
+    def test_finish_to_finish_waits_for_a_weekend_finish(self):
+        rows = run(
+            plan(
+                task(1, "1", 1, earliest="2026-11-07", calendar="7 días"),
+                task(2, "2", 2, (1, "FF", 0)),
+                calendars={"7 días": {"weekdays": list(range(7))}},
+            )
+        )
+        self.assertEqual(rows[1]["finish"], "2026-11-07")
+        self.assertEqual((rows[2]["start"], rows[2]["finish"]), ("2026-11-06", "2026-11-09"))
+
+    def test_fixed_finish_before_the_project_start_is_rejected(self):
+        with self.assertRaises(ScheduleError) as caught:
+            run(plan(task(1, "1", 0, fixed_finish="2026-10-30")))
+        self.assertIn("anterior al inicio", str(caught.exception))
+
+    def test_phase_of_milestones_spans_their_dates(self):
+        p = plan(
+            task(1, "1.1", 0),
+            task(2, "1.2", 0, earliest="2026-11-16"),
+            groups={"1": "Hitos"},
+        )
+        summary = phases(p, list(run(p).values()))[0]
+        self.assertEqual((summary["start"], summary["finish"]), (MONDAY, "2026-11-16"))
+        self.assertEqual(summary["duration"], 11)
+
+
 class Export(unittest.TestCase):
     def test_xml_keeps_milestones_calendars_baseline_and_phases(self):
         from xml.etree import ElementTree as ET

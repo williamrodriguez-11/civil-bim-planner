@@ -259,12 +259,12 @@ export function parsePaste(text: string): { name: string; duration: number }[] {
     const name = cells[0] ?? "";
     const raw = (cells[1] ?? "").replace(",", ".");
     const number = raw.match(/^-?\d+(?:\.\d+)?/);
-    if (
-      i === 0 &&
-      !number &&
-      /actividad|nombre|tarea|duraci/i.test(cells.join(" "))
-    )
-      return;
+    // A header row has header labels, not activity names that contain them.
+    const header = (text: string) =>
+      /^(actividad(es)?|nombre|tareas?|descripci[oó]n|duraci[oó]n( \(?d[ií]as\)?)?|d[ií]as)$/i.test(
+        text,
+      );
+    if (i === 0 && !number && (header(name) || header(cells[1] ?? ""))) return;
     if (!name) return;
     const duration = number ? Math.max(0, Math.round(Number(number[0]))) : 1;
     out.push({ name: name.slice(0, 160), duration: Math.min(duration, 3650) });

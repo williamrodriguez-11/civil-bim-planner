@@ -127,12 +127,19 @@ def log(db, pid, message):
     db.execute("INSERT INTO event(project,message) VALUES(?,?)", (pid, message))
 
 
-def results(db, pid):
-    rows = db.execute(
-        "SELECT id,result FROM source_catalog WHERE project=? AND deleted_at IS NULL AND result IS NOT NULL",
-        (pid,),
+def results(db, pid, only=None):
+    """Saved quantity results of a project; `only` limits them to some tables."""
+    sql = (
+        "SELECT id,result FROM source_catalog WHERE project=? "
+        "AND deleted_at IS NULL AND result IS NOT NULL"
     )
-    return {r["id"]: json.loads(r["result"]) for r in rows}
+    params = [pid]
+    if only is not None:
+        if not only:
+            return {}
+        sql += " AND id IN (" + ",".join("?" * len(only)) + ")"
+        params += list(only)
+    return {r["id"]: json.loads(r["result"]) for r in db.execute(sql, params)}
 
 
 def issue_snapshot(row):
@@ -772,10 +779,7 @@ def preview_plan(pid: int, plan: Plan):
     with connect() as db:
         project(db, pid)
         # Only the tables that durations depend on are read.
-        data = (
-            {i: r for i, r in results(db, pid).items() if i in linked} if linked else {}
-        )
-        return timeline(plan, data)
+        return timeline(plan, results(db, pid, linked))
 
 
 @project_routes.put("/plan")

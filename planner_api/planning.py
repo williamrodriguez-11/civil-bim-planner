@@ -250,6 +250,11 @@ def schedule(plan: Plan, sources, today=None):
             base = finish_pt[p] if link.relation in ("FS", "FF") else start_pt[p]
             w = c.work(base) + link.lag
             if link.relation in ("FF", "SF"):
+                if link.lag >= 0 and d and base[1] == 1:
+                    # The predecessor may finish on a day this calendar does
+                    # not work: finish after it, not before.
+                    while c.end_point(w) < base:
+                        w += 1
                 w -= d  # the link constrains the finish
             w = max(w, 0)  # never before the project start
             finish_based = link.relation in ("FS", "FF")
@@ -287,6 +292,12 @@ def schedule(plan: Plan, sources, today=None):
         candidates.append((0, at(0, False), {"type": "start"}, plan.start, False))
         s, point, why, near, finish_based = max(candidates, key=lambda x: (x[0], x[1]))
         if t.fixed_finish:
+            if t.fixed_finish < plan.start:
+                raise ScheduleError(
+                    f"{t.name}: la fecha de finalización es anterior al inicio del proyecto.",
+                    i,
+                    "fixed_finish",
+                )
             if not c.works(t.fixed_finish):
                 raise ScheduleError(
                     f"{t.name}: la fecha de finalización debe ser laborable.",
@@ -439,12 +450,14 @@ def phases(plan: Plan, rows):
             "name": plan.groups.get(code, "Fase " + code),
             "start": start,
             "finish": finish,
+            # Span of the phase in project working days (milestones on a
+            # single day span none).
             "duration": max(
                 0,
                 project.work((date.fromisoformat(finish), 1))
                 - project.work((date.fromisoformat(start), 0)),
             )
-            if weight
+            if weight or start != finish
             else 0,
             "progress": average("progress"),
             "planned": average("planned"),

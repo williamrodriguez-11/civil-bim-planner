@@ -188,6 +188,7 @@ export function Schedule({
       return JSON.parse(sessionStorage.getItem(storeKey) ?? "null") as {
         revision: number;
         plan: Plan;
+        base?: string;
       } | null;
     } catch {
       return null;
@@ -195,8 +196,14 @@ export function Schedule({
     // Only on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The draft still applies if nothing changed, or if only other parts of
+  // the project changed since (the saved schedule is the one it started from).
   const restored =
-    stored?.revision === state.project.revision ? stored.plan : null;
+    stored &&
+    (stored.revision === state.project.revision ||
+      stored.base === JSON.stringify(state.plan))
+      ? stored.plan
+      : null;
   // A draft from before another change in the project: offer to recover it.
   const [stale, setStale] = useState<Plan | null>(
     stored && !restored ? stored.plan : null,
@@ -234,7 +241,11 @@ export function Schedule({
     try {
       sessionStorage.setItem(
         storeKey,
-        JSON.stringify({ revision: state.project.revision, plan }),
+        JSON.stringify({
+          revision: state.project.revision,
+          plan,
+          base: JSON.stringify(state.plan),
+        }),
       );
     } catch {
       // Keeping the draft across reloads is only a convenience.
@@ -877,14 +888,16 @@ export function Schedule({
 
       {stale && (
         <div className="notice planner-problem" role="status">
-          Hay cambios sin guardar de una sesión anterior en este cronograma.
+          Tienes cambios sin guardar de antes, pero el cronograma guardado
+          cambió después (por ejemplo, desde otra pestaña). Si los recuperas,
+          reemplazarán esa versión al guardar.
           <button
             onClick={() => {
               setDraft(stale);
               setStale(null);
             }}
           >
-            Recuperar cambios
+            Reemplazar con mis cambios
           </button>
           <button
             onClick={() => {
@@ -896,7 +909,7 @@ export function Schedule({
               setStale(null);
             }}
           >
-            Descartar
+            Descartar mis cambios
           </button>
         </div>
       )}
@@ -924,7 +937,7 @@ export function Schedule({
         aria-busy={saving}
       >
         <div
-          className="planner-scroll"
+          className={"planner-scroll" + (width < 560 ? " narrow" : "")}
           ref={scroller}
           onPaste={onPaste}
           style={{ ["--table-w" as string]: tableWidth + "px" }}

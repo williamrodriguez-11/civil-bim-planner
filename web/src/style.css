@@ -2216,3 +2216,8 @@ button.danger:hover {
   background: #c2410c;
   border: 0;
 }
+
+/* On a phone the activity pane would cover the whole Gantt: let it scroll. */
+.planner-scroll.narrow .planner-cells {
+  position: relative;
+}
