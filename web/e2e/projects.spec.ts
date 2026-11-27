@@ -1,17 +1,12 @@
 import { test, expect } from "@playwright/test";
 
-test("Borrar y restaurar proyectos desde la papelera", async ({ page }) => {
+test("Borrar y restaurar proyectos desde la papelera", async ({
+  page,
+}) => {
   const request = page.request;
-  expect(
-    (
-      await request.post("/api/auth/register", {
-        data: {
-          username: "papelera",
-          password: "cuenta para pruebas",
-        },
-      })
-    ).status(),
-  ).toBe(201);
+  expect((await request.post("/api/auth/register", {data: {
+    username: "papelera", password: "cuenta para pruebas"
+  }})).status()).toBe(201);
   const first = "Proyecto de prueba A";
   const second = "Proyecto de prueba B";
   for (const name of [first, second]) {
@@ -63,8 +58,6 @@ test("Borrar y restaurar proyectos desde la papelera", async ({ page }) => {
   // Permanent deletion asks for confirmation and empties the trash.
   await trash.click();
   await page.getByRole("button", { name: "Vaciar proyectos" }).click();
-  await dialog
-    .getByRole("button", { name: "Eliminar definitivamente" })
-    .click();
+  await dialog.getByRole("button", { name: "Eliminar definitivamente" }).click();
   await expect(page.getByText("No hay proyectos en la papelera")).toBeVisible();
 });
