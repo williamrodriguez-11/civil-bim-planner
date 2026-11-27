@@ -66,7 +66,6 @@ export function prefersReducedMotion() {
 export function SceneSlot({ status }: { status: SceneStatus }) {
   const [mode, setMode] = useState<"wait" | "scene" | "still">("wait");
   const [ready, setReady] = useState(false);
-  const [stage, setStage] = useState("");
   const [paused, setPaused] = useState(pausedBefore);
   const [failed, setFailed] = useState(false);
   // Whether this browser can animate at all (WebGL and no reduced motion).
@@ -115,9 +114,7 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
         role="img"
         aria-label="Ilustración de un edificio de concreto en construcción sobre sus ejes de replanteo"
       >
-        <div className="login-scene-poster">
-          <StructureStill axesOnly={!still} />
-        </div>
+        <div className="login-scene-poster">{still && <StructureStill />}</div>
         {mode === "scene" && (
           <SceneBoundary onError={fail}>
             <Suspense fallback={null}>
@@ -125,15 +122,10 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
                 status={status}
                 onReady={() => setReady(true)}
                 onFail={fail}
-                onStage={setStage}
               />
             </Suspense>
           </SceneBoundary>
         )}
-      </div>
-      <div className="login-scene-caption" aria-hidden="true">
-        <span>Modelo estructural</span>
-        <b>{still ? "Estructura completa" : stage || "Ejes de replanteo"}</b>
       </div>
       {/* Decorative motion longer than 5 s must be stoppable (WCAG 2.2.2). */}
       {animatable && !failed && mode !== "wait" && (
