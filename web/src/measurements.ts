@@ -102,17 +102,20 @@ export function levelHeight(name: string): number | null {
   return null;
 }
 
-export function compareLevels(a: string, b: string) {
-  // Meters only against meters; otherwise floor ranks against floor ranks.
-  const ea = levelElevation(a),
-    eb = levelElevation(b);
-  if (ea !== null && eb !== null && ea !== eb) return ea - eb;
-  const x = levelHeight(a),
-    y = levelHeight(b);
-  if (x !== null && y !== null && x !== y) return x - y;
-  if (x !== null && y === null) return -1;
-  if (x === null && y !== null) return 1;
-  return a.localeCompare(b, "es", { numeric: true });
+/** Bottom-to-top comparator for one list of levels. The criterion is the
+ * same for every pair, so the order never depends on the input order:
+ * elevations when every level has one, otherwise floor ranks. */
+export function levelOrder(names: string[]) {
+  const byElevation = names.every((n) => levelElevation(n) !== null);
+  const key = byElevation ? levelElevation : levelHeight;
+  return (a: string, b: string) => {
+    const x = key(a),
+      y = key(b);
+    if (x !== null && y !== null && x !== y) return x - y;
+    if (x !== null && y === null) return -1;
+    if (x === null && y !== null) return 1;
+    return a.localeCompare(b, "es", { numeric: true });
+  };
 }
 
 export function measurementName(measure: Measurement) {

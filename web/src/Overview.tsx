@@ -30,7 +30,7 @@ import {
 } from "./model";
 import { Empty, Grid } from "./shared";
 import {
-  compareLevels,
+  levelOrder,
   measurementName,
   measurementTotal,
   summarizeMeasurements,
@@ -326,6 +326,7 @@ export function Overview({
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group)!.push(row);
   }
+  const compareLevels = levelOrder(Array.from(groups.keys()));
   const sums = Array.from(groups)
     .flatMap(([name, rows]) =>
       summarizeMeasurements(rows, [selected]).map((measure) => ({
@@ -570,7 +571,13 @@ export function Overview({
           {sums.length && chartView === "Tabla" ? (
             <Grid
               sortReset={order + grouping}
-              summable={["Cantidad"]}
+              // Subtotals only when every group has its full measurement.
+              summable={
+                groups.size === sums.length &&
+                sums.every((s) => s.measure.measuredRows === s.measure.sourceRows)
+                  ? ["Cantidad"]
+                  : []
+              }
               rows={sums.map(({ name, measure }) => ({
                 [grouping]: name,
                 Cantidad: measurementTotal(measure),
