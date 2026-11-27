@@ -20,9 +20,14 @@ export function Account({
   const [visible, setVisible] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const passwordField = useRef<HTMLInputElement>(null);
+  // Once the person signs in, a late answer of the initial session check
+  // must not replace the new account.
+  const manual = useRef(false);
 
   useEffect(() => {
     const expired = () => {
+      setLeaving(false);
+      setBusy(false);
       setUser(null);
       setPassword("");
       setVisible(false);
@@ -44,8 +49,10 @@ export function Account({
     if (result) history.replaceState(null, "", location.pathname);
     fetch("/api/auth/me", { cache: "no-store" })
       .then(async (r) => {
-        if (r.ok) setUser(await r.json());
-        else if (r.status !== 401)
+        if (r.ok) {
+          const found = await r.json();
+          if (!manual.current) setUser(found);
+        } else if (r.status !== 401)
           throw Error("No se pudo comprobar la sesión.");
       })
       .catch((e) => setError(cleanError(e)))
@@ -95,6 +102,7 @@ export function Account({
             aria-busy={busy}
             onSubmit={async (event) => {
               event.preventDefault();
+              manual.current = true;
               setBusy(true);
               setError("");
               try {
@@ -112,6 +120,7 @@ export function Account({
                   await new Promise((done) => setTimeout(done, 650));
                 sessionChanged();
                 setUser(result);
+                setLeaving(false);
               } catch (e) {
                 // Keep the username; select the password to type it again.
                 setError(cleanError(e));

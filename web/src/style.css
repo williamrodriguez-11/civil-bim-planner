@@ -102,6 +102,31 @@
   isolation: isolate;
   transition: filter 0.6s ease;
 }
+.login-scene-art {
+  position: absolute;
+  inset: 0;
+}
+.login-scene-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 7px 11px;
+  font-size: 12px;
+  color: #dbeafe;
+  background: rgba(10, 19, 34, 0.72);
+  border-color: rgba(147, 197, 253, 0.28);
+}
+.login-scene-toggle:hover {
+  background: rgba(19, 35, 61, 0.9);
+  border-color: rgba(147, 197, 253, 0.5);
+}
+@media (max-width: 860px) {
+  .login-scene-toggle {
+    top: 10px;
+    right: 10px;
+    padding: 6px 9px;
+  }
+}
 .login-scene-poster,
 .login-scene-canvas {
   position: absolute;

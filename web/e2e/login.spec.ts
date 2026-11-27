@@ -65,7 +65,7 @@ test("Movimiento reducido: imagen fija, sin Three.js y acceso inmediato", async 
   const scripts: string[] = [];
   page.on("request", (r) => scripts.push(r.url()));
   await page.goto("/");
-  await expect(page.locator(".login-scene.is-still svg")).toBeVisible();
+  await expect(page.locator(".login-scene.is-still .structure-still")).toBeVisible();
   await expect(page.locator(".login-scene canvas")).toHaveCount(0);
   await page
     .getByLabel("Nombre de usuario o correo electrónico")
@@ -76,5 +76,32 @@ test("Movimiento reducido: imagen fija, sin Three.js y acceso inmediato", async 
     page.getByRole("heading", { name: "Resumen general" }),
   ).toBeVisible();
   expect(scripts.some((url) => /LoginScene-/.test(url))).toBe(false);
+  await context.close();
+});
+
+test("Si la escena no descarga o se pausa, queda la imagen fija y el acceso sigue disponible", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await register(page);
+  await page.route(/LoginScene-.*\.js$/, (route) => route.abort());
+  await page.goto("/");
+  await expect(page.locator(".login-scene.is-still .structure-still")).toBeVisible();
+  await expect(
+    page.getByLabel("Nombre de usuario o correo electrónico"),
+  ).toBeEditable();
+  await page.unroute(/LoginScene-.*\.js$/);
+
+  // A visitor can stop the decorative animation; the choice is remembered.
+  const fresh = await context.newPage();
+  await fresh.goto("/");
+  await expect(fresh.locator(".login-scene.is-ready canvas")).toBeVisible();
+  await fresh.getByRole("button", { name: "Pausar animación" }).click();
+  await expect(fresh.locator(".login-scene canvas")).toHaveCount(0);
+  await expect(fresh.locator(".login-scene.is-still .structure-still")).toBeVisible();
+  await fresh.reload();
+  await expect(fresh.getByRole("button", { name: "Animar" })).toBeVisible();
+  await expect(fresh.locator(".login-scene canvas")).toHaveCount(0);
   await context.close();
 });

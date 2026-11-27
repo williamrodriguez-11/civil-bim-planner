@@ -1,4 +1,12 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { Pause, Play } from "lucide-react";
 import { StructureStill } from "./StructureStill";
 import type { SceneStatus } from "./LoginScene";
 
@@ -9,6 +17,33 @@ function webglAvailable() {
   try {
     const canvas = document.createElement("canvas");
     return !!(canvas.getContext("webgl2") || canvas.getContext("webgl"));
+  } catch {
+    return false;
+  }
+}
+
+/** A failed download of the scene (e.g. after a deploy) shows the still
+ * image instead of taking the sign-in page down. */
+class SceneBoundary extends Component<
+  { onError: () => void; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch() {
+    this.props.onError();
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+const PAUSE_KEY = "civil-login-animation";
+function pausedBefore() {
+  try {
+    return localStorage.getItem(PAUSE_KEY) === "paused";
   } catch {
     return false;
   }
@@ -26,10 +61,16 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
   const [mode, setMode] = useState<"wait" | "scene" | "still">("wait");
   const [ready, setReady] = useState(false);
   const [stage, setStage] = useState("");
+  const [paused, setPaused] = useState(pausedBefore);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const decide = () =>
-      setMode(motion?.matches || !webglAvailable() ? "still" : "scene");
+      setMode(
+        motion?.matches || paused || failed || !webglAvailable()
+          ? "still"
+          : "scene",
+      );
     // Let the form paint first, then decide and start loading the scene.
     const id = window.setTimeout(decide, 0);
     motion?.addEventListener("change", decide);
@@ -37,8 +78,22 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
       window.clearTimeout(id);
       motion?.removeEventListener("change", decide);
     };
-  }, []);
+  }, [paused, failed]);
   const still = mode === "still";
+  const fail = () => {
+    setFailed(true);
+    setMode("still");
+  };
+  function togglePause() {
+    const next = !paused;
+    setPaused(next);
+    setReady(false);
+    try {
+      localStorage.setItem(PAUSE_KEY, next ? "paused" : "playing");
+    } catch {
+      // Remembering the choice is only a convenience.
+    }
+  }
   return (
     <div
       className={
@@ -47,26 +102,44 @@ export function SceneSlot({ status }: { status: SceneStatus }) {
         (still ? " is-still" : "") +
         (status === "pending" ? " is-pending" : "")
       }
-      role="img"
-      aria-label="Ilustración de un edificio de concreto en construcción sobre sus ejes de replanteo"
     >
-      <div className="login-scene-poster">
-        <StructureStill axesOnly={!still} />
+      <div
+        className="login-scene-art"
+        role="img"
+        aria-label="Ilustración de un edificio de concreto en construcción sobre sus ejes de replanteo"
+      >
+        <div className="login-scene-poster">
+          <StructureStill axesOnly={!still} />
+        </div>
+        {mode === "scene" && (
+          <SceneBoundary onError={fail}>
+            <Suspense fallback={null}>
+              <LoginScene
+                status={status}
+                onReady={() => setReady(true)}
+                onFail={fail}
+                onStage={setStage}
+              />
+            </Suspense>
+          </SceneBoundary>
+        )}
       </div>
-      {mode === "scene" && (
-        <Suspense fallback={null}>
-          <LoginScene
-            status={status}
-            onReady={() => setReady(true)}
-            onFail={() => setMode("still")}
-            onStage={setStage}
-          />
-        </Suspense>
-      )}
       <div className="login-scene-caption" aria-hidden="true">
         <span>Modelo estructural</span>
         <b>{still ? "Estructura completa" : stage || "Ejes de replanteo"}</b>
       </div>
+      {/* Decorative motion longer than 5 s must be stoppable (WCAG 2.2.2). */}
+      {!failed && !prefersReducedMotion() && mode !== "wait" && (
+        <button
+          type="button"
+          className="login-scene-toggle"
+          aria-pressed={paused}
+          onClick={togglePause}
+        >
+          {paused ? <Play size={14} /> : <Pause size={14} />}
+          {paused ? "Animar" : "Pausar animación"}
+        </button>
+      )}
     </div>
   );
 }
