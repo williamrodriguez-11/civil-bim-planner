@@ -200,10 +200,12 @@ export default function LoginScene({
       HIGH = 1.4 - ELEVATION;
     const aim = { yaw: 0, pitch: 0, user: false };
     const view = { yaw: 0, pitch: 0 };
-    let drag: { id: number; x: number; y: number } | null = null;
+    let drag: { id: number; x: number; y: number; moved: number } | null = null;
+    let lastClick = 0;
     const down = (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      // One pointer drives the orbit until it is released.
+      if (drag || e.button !== 0) return;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
       root.setPointerCapture(e.pointerId);
       root.classList.add("is-dragging");
       if (!aim.user) {
@@ -215,28 +217,34 @@ export default function LoginScene({
     };
     const move = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.id) return;
-      aim.yaw += (e.clientX - drag.x) * 0.01;
-      aim.pitch = Math.max(
-        LOW,
-        Math.min(HIGH, aim.pitch + (e.clientY - drag.y) * 0.01),
-      );
+      const dx = e.clientX - drag.x,
+        dy = e.clientY - drag.y;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      aim.yaw += dx * 0.01;
+      aim.pitch = Math.max(LOW, Math.min(HIGH, aim.pitch + dy * 0.01));
       drag.x = e.clientX;
       drag.y = e.clientY;
     };
     const up = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.id) return;
+      // Two clicks without dragging reset the view; drags never count.
+      const click = drag.moved < 5 && e.type === "pointerup";
       drag = null;
       root.classList.remove("is-dragging");
-    };
-    const reset = () => {
-      aim.yaw = 0;
-      aim.pitch = 0;
+      if (!click) {
+        lastClick = 0;
+        return;
+      }
+      if (e.timeStamp - lastClick < 400) {
+        aim.yaw = 0;
+        aim.pitch = 0;
+        lastClick = 0;
+      } else lastClick = e.timeStamp;
     };
     root.addEventListener("pointerdown", down);
     root.addEventListener("pointermove", move);
     root.addEventListener("pointerup", up);
     root.addEventListener("pointercancel", up);
-    root.addEventListener("dblclick", reset);
 
     let elapsed = 0,
       previous = performance.now(),
@@ -336,7 +344,6 @@ export default function LoginScene({
       root.removeEventListener("pointermove", move);
       root.removeEventListener("pointerup", up);
       root.removeEventListener("pointercancel", up);
-      root.removeEventListener("dblclick", reset);
       renderer.domElement.removeEventListener("webglcontextlost", lost);
       disposables.forEach((item) => item.dispose());
       renderer.dispose();
