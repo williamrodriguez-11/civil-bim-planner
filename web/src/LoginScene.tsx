@@ -398,6 +398,8 @@ export default function LoginScene({
       renderer.domElement.removeEventListener("webglcontextlost", lost);
       disposables.forEach((item) => item.dispose());
       renderer.dispose();
+      // Give the context back now instead of waiting for the browser.
+      renderer.forceContextLoss();
       renderer.domElement.remove();
     };
     // The scene is built once; status reaches it through `live`.

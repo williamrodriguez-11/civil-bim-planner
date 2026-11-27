@@ -90,7 +90,7 @@ test("Si la escena no descarga o se pausa, queda la imagen fija y el acceso sigu
   // These checks need a browser that can animate at all.
   const webgl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
-    return !!(canvas.getContext("webgl2") || canvas.getContext("webgl"));
+    return !!canvas.getContext("webgl2");
   });
   test.skip(!webgl, "Este navegador no tiene WebGL: solo usa la imagen fija.");
   let requested = false;

@@ -13,13 +13,19 @@ import type { SceneStatus } from "./LoginScene";
 // Three.js lives in its own chunk, fetched only after the form is on screen.
 const LoginScene = lazy(() => import("./LoginScene"));
 
+// Three.js needs WebGL 2. Probed once, and the probe context is released.
+let webgl2: boolean | null = null;
 function webglAvailable() {
-  try {
-    const canvas = document.createElement("canvas");
-    return !!(canvas.getContext("webgl2") || canvas.getContext("webgl"));
-  } catch {
-    return false;
+  if (webgl2 === null) {
+    try {
+      const gl = document.createElement("canvas").getContext("webgl2");
+      webgl2 = !!gl;
+      gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch {
+      webgl2 = false;
+    }
   }
+  return webgl2;
 }
 
 /** A failed download of the scene (e.g. after a deploy) shows the still

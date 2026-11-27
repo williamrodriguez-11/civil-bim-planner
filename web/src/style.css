@@ -235,13 +235,13 @@
 .login.is-leaving .login-scene {
   filter: brightness(1.25);
 }
+/* Opacity only: a transform would trap the fixed mobile drawer. */
 .shell {
-  animation: panel-in 0.35s ease both;
+  animation: panel-in 0.35s ease;
 }
 @keyframes panel-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
   }
 }
 @media (max-width: 860px) {
