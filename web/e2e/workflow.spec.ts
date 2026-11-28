@@ -75,13 +75,25 @@ test("Flujo sintético desde una tabla sin esquema fijo hasta el reporte y el Ga
   await expect(page.getByLabel("Nombre de la fase 1")).toHaveValue("Cimentación");
   await page.getByLabel("Nombre de la actividad 1.1").focus();
   await page.getByText("Calcular la duración con cantidades (opcional)").click();
-  await page.getByLabel("Origen de la duración").selectOption({ index: 1 });
-  await page.getByLabel("Rendimiento").fill("5");
+  await page.getByLabel("Tabla de cantidades").selectOption({ index: 1 });
+  await page.getByLabel("Avance de la cuadrilla por día").fill("5");
   // 15 m³ at 5 m³ per day: 3 working days, computed by the server.
   await expect(page.locator(".planner-details .notice")).toContainText("15 m³");
   await expect(
     page.getByLabel("Duración en días laborables de Hormigonar pilotes"),
   ).toHaveValue("3");
+  // Typing over the calculated duration uses the typed one, and can be undone.
+  const days = page.getByLabel(
+    "Duración en días laborables de Hormigonar pilotes",
+  );
+  await days.click();
+  await page.keyboard.type("4");
+  await expect(days).toHaveValue("4");
+  await expect(page.getByText("ahora dura lo que escribiste")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Volver a calcularla con cantidades" })
+    .click();
+  await expect(days).toHaveValue("3");
   await page.getByRole("button", { name: "Guardar cronograma" }).click();
   await expect(page.getByText("Cronograma guardado.")).toBeVisible();
   await page.getByRole("button", { name: "Reportes", exact: true }).click();

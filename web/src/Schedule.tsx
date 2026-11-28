@@ -125,6 +125,60 @@ function firstWorkday(from: string, plan: Plan, calendar?: string) {
   return null;
 }
 
+const COLS_KEY = "civil-schedule-columns";
+const DEFAULT_COLS = { name: 220, preds: 220 };
+// Selection, EDT, Días, Inicio, Fin and the table's border.
+const FIXED_COLS = 28 + 42 + 44 + 54 + 54 + 1;
+const clampCol = (n: number) => Math.round(Math.min(640, Math.max(120, n)));
+
+/** Drag handle on the right edge of a column header; arrows also work,
+ * and a double click restores the default width. */
+function ColumnResizer({
+  label,
+  value,
+  onChange,
+  reset,
+}: {
+  label: string;
+  value: number;
+  onChange: (width: number) => void;
+  reset: () => void;
+}) {
+  const start = useRef<{ x: number; width: number } | null>(null);
+  return (
+    <span
+      className="col-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Ancho de la columna ${label}`}
+      aria-valuenow={value}
+      aria-valuemin={120}
+      aria-valuemax={640}
+      tabIndex={0}
+      title="Arrastra para cambiar el ancho (doble clic: ancho normal)"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        start.current = { x: e.clientX, width: value };
+      }}
+      onPointerMove={(e) => {
+        if (start.current)
+          onChange(clampCol(start.current.width + e.clientX - start.current.x));
+      }}
+      onPointerUp={() => (start.current = null)}
+      onPointerCancel={() => (start.current = null)}
+      onDoubleClick={reset}
+      onKeyDown={(e) => {
+        const step =
+          e.key === "ArrowRight" ? 16 : e.key === "ArrowLeft" ? -16 : 0;
+        if (!step) return;
+        e.preventDefault();
+        onChange(clampCol(value + step));
+      }}
+    />
+  );
+}
+
 const RELATION_CODES: Record<string, string> = {
   FC: "FS",
   FS: "FS",
@@ -338,6 +392,11 @@ export function Schedule({
   // Whether a preview has succeeded since the last start edit: after that,
   // a failure comes from something else.
   const startChecked = useRef(false);
+  // The last activity whose calculated duration was replaced by hand.
+  const [unlinked, setUnlinked] = useState<{
+    id: number;
+    quantity: NonNullable<Task["quantity"]>;
+  } | null>(null);
   const [request, setRequest] = useState<{
     id: number;
     value: string;
@@ -366,6 +425,25 @@ export function Schedule({
   const dragged = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
+  // Widths of «Actividad» and «Predecesoras», adjustable by dragging the
+  // edge of their header, as in Excel or Project. Kept in this browser.
+  const [cols, setCols] = useState<{ name: number; preds: number }>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLS_KEY) ?? "");
+      if (Number.isFinite(saved?.name) && Number.isFinite(saved?.preds))
+        return { name: clampCol(saved.name), preds: clampCol(saved.preds) };
+    } catch {
+      // Defaults below.
+    }
+    return DEFAULT_COLS;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLS_KEY, JSON.stringify(cols));
+    } catch {
+      // Not remembered; still works.
+    }
+  }, [cols]);
 
   function setDraft(plan: Plan) {
     latest.current = plan;
@@ -723,6 +801,7 @@ export function Schedule({
 
   function removeTasks(ids: number[]) {
     const drop = new Set(ids);
+    if (unlinked && drop.has(unlinked.id)) setUnlinked(null);
     setTyped((raw) =>
       Object.fromEntries(Object.entries(raw).filter(([id]) => !drop.has(+id))),
     );
@@ -849,6 +928,7 @@ export function Schedule({
       setDirty(false);
       setDurations({});
       setNotice("Cronograma guardado.");
+      setUnlinked(null);
       setRequest(null);
     } catch (e) {
       setProblem({
@@ -915,8 +995,28 @@ export function Schedule({
   const origin = Math.min(...starts.map(toDay)) - 2;
   const last = Math.max(origin + 28, ...ends.map(toDay)) + 4;
   const span = last - origin + 1;
-  const tableWidth =
-    width < 760 ? Math.max(320, width - 40) : width < 1250 ? 580 : 640;
+  // Below this the dates don't fit; the planner's own width decides it.
+  const narrow = width < 620;
+  // The chosen widths, shrunk if needed so at least 240 px of Gantt shows.
+  const room = Math.max(240, width - 240 - FIXED_COLS);
+  // As chosen, within the room left for them: «Actividad» first, then
+  // «Predecesoras»; each keeps at least 120 px.
+  const shownName = Math.min(Math.max(cols.name, 120), room - 120);
+  const shown = {
+    name: shownName,
+    preds: Math.min(Math.max(cols.preds, 120), room - shownName),
+  };
+  // A resize moves the edge one to one, up to the room available.
+  const resize = (column: "name" | "preds", value: number) =>
+    setCols((c) => ({
+      ...c,
+      [column]: clampCol(
+        Math.min(value, column === "name" ? room - 120 : room - shown.name),
+      ),
+    }));
+  const tableWidth = narrow
+    ? Math.max(320, width - 40)
+    : FIXED_COLS + shown.name + shown.preds;
   const px =
     scale === "fit"
       ? Math.max(0.05, (width - tableWidth - 4) / span)
@@ -1257,6 +1357,28 @@ export function Schedule({
           </button>
         </div>
       )}
+      {unlinked &&
+        tasks.get(unlinked.id) &&
+        !tasks.get(unlinked.id)!.quantity && (
+          <div className="notice planner-problem" role="status">
+            <span>
+              «{names.get(unlinked.id)}» ahora dura lo que escribiste; antes se
+              calculaba con cantidades.
+            </span>
+            <button
+              disabled={saving}
+              onClick={() => {
+                const { [unlinked.id]: _, ...rest } = durations;
+                setDurations(rest);
+                patchTask(unlinked.id, { quantity: unlinked.quantity });
+                setUnlinked(null);
+              }}
+            >
+              Volver a calcularla con cantidades
+            </button>
+            <button onClick={() => setUnlinked(null)}>Entendido</button>
+          </div>
+        )}
       {(() => {
         if (!request || !startHold || "honoured" in startHold) return null;
         const { t, d, why } = startHold;
@@ -1359,10 +1481,18 @@ export function Schedule({
         aria-busy={saving}
       >
         <div
-          className={"planner-scroll" + (width < 560 ? " narrow" : "")}
+          className={
+            "planner-scroll" +
+            (narrow ? " compact" : "") +
+            (width < 560 ? " narrow" : "")
+          }
           ref={scroller}
           onPaste={onPaste}
-          style={{ ["--table-w" as string]: tableWidth + "px" }}
+          style={{
+            ["--table-w" as string]: tableWidth + "px",
+            ["--name-w" as string]: shown.name + "px",
+            ["--preds-w" as string]: shown.preds + "px",
+          }}
         >
           <div
             className="planner-canvas"
@@ -1372,11 +1502,35 @@ export function Schedule({
               <div className="planner-cells">
                 <span />
                 <span>EDT</span>
-                <span>Actividad</span>
+                <span className="resizable">
+                  Actividad
+                  {!narrow && (
+                    <ColumnResizer
+                      label="Actividad"
+                      value={shown.name}
+                      onChange={(name) => resize("name", name)}
+                      reset={() =>
+                        setCols((c) => ({ ...c, name: DEFAULT_COLS.name }))
+                      }
+                    />
+                  )}
+                </span>
                 <span title="Duración en días laborables">Días</span>
                 <span>Inicio</span>
                 <span>Fin</span>
-                <span>Predecesoras</span>
+                <span className="resizable">
+                  Predecesoras
+                  {!narrow && (
+                    <ColumnResizer
+                      label="Predecesoras"
+                      value={shown.preds}
+                      onChange={(preds) => resize("preds", preds)}
+                      reset={() =>
+                        setCols((c) => ({ ...c, preds: DEFAULT_COLS.preds }))
+                      }
+                    />
+                  )}
+                </span>
               </div>
               <div className="planner-axis" style={{ width: timelineWidth }}>
                 {ticks.top.map((t) => (
@@ -1659,10 +1813,12 @@ export function Schedule({
                           title={
                             cellError(r.id, "duration") ||
                             (t.quantity
-                              ? "Calculada con las cantidades vinculadas"
+                              ? "Calculada con cantidades. Si escribes otra, se usa la tuya."
                               : undefined)
                           }
-                          readOnly={!!t.quantity}
+                          data-quantity={t.quantity ? "" : undefined}
+                          // Typing replaces the value instead of adding to it.
+                          onFocus={(e) => e.currentTarget.select()}
                           value={
                             durations[r.id] ??
                             String(
@@ -1679,7 +1835,14 @@ export function Schedule({
                             ) {
                               const { [r.id]: _, ...rest } = durations;
                               setDurations(rest);
-                              patchTask(r.id, { duration: Number(raw) });
+                              // A duration typed over one calculated with
+                              // quantities wins, as in Project; it can be undone.
+                              if (t.quantity)
+                                setUnlinked({ id: r.id, quantity: t.quantity });
+                              patchTask(r.id, {
+                                duration: Number(raw),
+                                ...(t.quantity ? { quantity: null } : {}),
+                              });
                             } else setDurations({ ...durations, [r.id]: raw });
                           }}
                           onKeyDown={(e) => onCellKey(e, r.id)}
@@ -1986,7 +2149,10 @@ export function Schedule({
                 patch={(change) => {
                   // A duration set from the panel replaces any value
                   // half-typed in the table cell.
-                  if ("duration" in change)
+                  // A new quantity choice replaces any pending undo.
+                  if ("quantity" in change && unlinked?.id === activeTask.id)
+                    setUnlinked(null);
+                  if ("duration" in change || change.quantity)
                     setDurations(({ [activeTask.id]: _, ...rest }) => rest);
                   patchTask(activeTask.id, change);
                 }}
@@ -2346,32 +2512,36 @@ function TaskDetails({
               </p>
             )}
 
-          <details className="details-card" open={!!task.calendar}>
-            <summary>Días de trabajo de esta actividad</summary>
-            <label>
-              Calendario
-              <select
-                value={task.calendar ?? ""}
-                onChange={(e) => patch({ calendar: e.target.value })}
-              >
-                <option value="">El del proyecto</option>
-                {Object.keys(plan.calendars ?? {}).map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-            </label>
-            <p className="muted">
-              Por ejemplo, un curado que sigue el fin de semana. Los calendarios
-              se crean en «Calendario y seguimiento».
-            </p>
-          </details>
+          {/* Only useful when the project has more than its own calendar. */}
+          {(!!task.calendar || !!Object.keys(plan.calendars ?? {}).length) && (
+            <details className="details-card" open={!!task.calendar}>
+              <summary>Días de trabajo de esta actividad</summary>
+              <label>
+                Calendario
+                <select
+                  value={task.calendar ?? ""}
+                  onChange={(e) => patch({ calendar: e.target.value })}
+                >
+                  <option value="">El del proyecto</option>
+                  {Object.keys(plan.calendars ?? {}).map((name) => (
+                    <option key={name}>{name}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted">
+                Por ejemplo, un curado que sigue el fin de semana. Los
+                calendarios se crean en «Calendario y seguimiento».
+              </p>
+            </details>
+          )}
 
           <details className="details-card" open={!!task.quantity}>
             <summary>Calcular la duración con cantidades (opcional)</summary>
             <p className="muted">
-              Si ya cuantificaste la obra, la app calcula cuántos días dura la
-              actividad: cantidad ÷ lo que avanza la cuadrilla por día. Por
-              ejemplo, 30 m³ de concreto a 5 m³ por día son 6 días.
+              En vez de escribir los días, la app los calcula con lo que
+              cuantificaste: cantidad ÷ lo que avanza la cuadrilla por día. Por
+              ejemplo, 30 m³ de concreto a 5 m³ por día son 6 días. Si cambian
+              las cantidades, la duración se actualiza sola.
             </p>
             {!sources.length && !task.quantity && (
               <p className="details-empty">
@@ -2380,7 +2550,7 @@ function TaskDetails({
               </p>
             )}
             <label>
-              Origen de la duración
+              Tabla de cantidades
               <select
                 value={task.quantity?.table ?? ""}
                 onChange={(e) =>
@@ -2399,7 +2569,7 @@ function TaskDetails({
                   })
                 }
               >
-                <option value="">No, escribo la duración en la tabla</option>
+                <option value="">No, escribo los días en la tabla</option>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} · {s.mapping?.category}
@@ -2457,7 +2627,7 @@ function TaskDetails({
                   </select>
                 </label>
                 <label>
-                  Magnitud
+                  Qué se mide
                   <select
                     value={task.quantity.unit}
                     onChange={(e) =>
@@ -2476,7 +2646,8 @@ function TaskDetails({
                   </select>
                 </label>
                 <label>
-                  Rendimiento ({unitLabel(task.quantity.unit)}/día)
+                  Avance de la cuadrilla por día (
+                  {unitLabel(task.quantity.unit)}/día)
                   <input
                     type="number"
                     min="0.000000001"

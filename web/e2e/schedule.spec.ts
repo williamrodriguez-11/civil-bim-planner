@@ -217,6 +217,19 @@ test("Como en Project: fechas en la tabla, predecesoras por número y enlazar ar
   const date = (field: "Inicio" | "Fin", name: string) =>
     page.getByRole("button", { name: new RegExp(`^${field} de ${name}:`) });
 
+  // The «Actividad» column can be widened by dragging its header edge.
+  const grip = page.getByRole("separator", {
+    name: "Ancho de la columna Actividad",
+  });
+  const g = (await grip.boundingBox())!;
+  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(g.x + 80, g.y + g.height / 2, { steps: 4 });
+  await page.mouse.up();
+  expect(Number(await grip.getAttribute("aria-valuenow"))).toBeGreaterThan(280);
+  await grip.dblclick();
+  await expect(grip).toHaveAttribute("aria-valuenow", "220");
+
   // Typing a finish changes the duration (working days, weekend skipped).
   await date("Fin", "Desmonte y limpieza").click();
   await page.getByLabel("Fin de Desmonte y limpieza").fill("2026-11-10");
