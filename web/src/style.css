@@ -2892,3 +2892,177 @@ details.details-card:not([open]) {
   color: var(--green);
   font-weight: 600;
 }
+
+/* Printed schedule (Imprimir / PDF). Only exists while printing. */
+.print-root {
+  display: none;
+}
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  body:has(.print-root) > *:not(.print-root) {
+    display: none !important;
+  }
+  body:has(.print-root) {
+    background: #fff;
+    min-width: 0;
+  }
+  .print-root {
+    display: block;
+    color: #1b2a25;
+    font-size: 9pt;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+.print-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  border-bottom: 2px solid #24664f;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+.print-header h1 {
+  font-size: 15pt;
+  margin: 0 0 2px;
+}
+.print-header p {
+  margin: 0;
+  color: #4e5f58;
+}
+.print-meta {
+  text-align: right;
+  font-size: 8pt;
+}
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.print-table thead {
+  display: table-header-group; /* repeated on every page */
+}
+.print-table tr {
+  break-inside: avoid;
+}
+.print-table th,
+.print-table td {
+  border-bottom: 1px solid #dde5e0;
+  padding: 2px 4px;
+  height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: normal;
+}
+.print-table th {
+  background: #eef3ef;
+  font-weight: 600;
+  height: 18px;
+}
+.print-table .p-wbs {
+  width: 9mm;
+  color: #4e5f58;
+}
+.print-table .p-name {
+  width: 58mm;
+}
+.print-table .p-num {
+  width: 10mm;
+  text-align: right;
+}
+.print-table .p-date {
+  width: 16mm;
+}
+/* Names and dates wrap instead of being cut. */
+.print-table td.p-name,
+.print-table td.p-date {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+.print-table .p-gantt {
+  padding: 0;
+}
+.print-table .p-phase td {
+  font-weight: 700;
+  background: #f6f8f6;
+}
+.print-axis,
+.print-track {
+  position: relative;
+  height: 100%;
+  min-height: 15px;
+}
+.print-axis span {
+  position: absolute;
+  top: 3px;
+  padding-left: 2px;
+  font-size: 7pt;
+  border-left: 1px solid #b9c6bf;
+  white-space: nowrap;
+}
+.print-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid #edf1ee;
+}
+.print-track b,
+.print-legend b {
+  display: inline-block;
+}
+.print-track b {
+  position: absolute;
+  top: 3px;
+}
+.print-bar {
+  height: 9px;
+  border-radius: 2px;
+  background: #24664f;
+}
+.print-bar.critical {
+  background: #b5532a;
+}
+.print-phase {
+  height: 5px;
+  margin-top: 2px;
+  background: #1b2a25;
+}
+.print-milestone {
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  background: #1b2a25;
+  transform: rotate(45deg);
+}
+.print-milestone.critical {
+  background: #b5532a;
+}
+.print-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 8pt;
+  color: #4e5f58;
+}
+.print-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.print-legend .print-bar,
+.print-legend .print-phase {
+  width: 18px;
+  margin: 0;
+}
+.print-legend .print-milestone {
+  margin-left: 0;
+  transform: rotate(45deg) scale(0.8);
+}

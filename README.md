@@ -117,6 +117,7 @@ La tabla editable y el diagrama de Gantt comparten filas: desplazarse, seleccion
 - **Cálculo en vivo:** cada cambio se recalcula en el servidor sin guardarlo. Los errores aparecen en la celda o la fila; una dependencia circular nombra las actividades que la forman. *Guardar cronograma* lo almacena; el borrador sin guardar se conserva en la pestaña.
 - **Gantt:** barras, fases, hitos, dependencias, ruta crítica, fines de semana y festivos sombreados y fecha de seguimiento. Escalas de días, semanas, meses o *Todo el cronograma*.
 - **Seguimiento:** *Fijar línea base* guarda las fechas actuales para compararlas: barra gris y atraso o adelanto en días laborables. El porcentaje completado ya no se edita en la pantalla; los valores guardados antes se conservan en los datos y en el XML.
+- **Imprimir / PDF:** abre el cuadro de impresión del navegador con el cronograma completo en A4 horizontal: tabla (EDT, actividad, días, inicio y fin) y Gantt ajustado al ancho de la hoja, con fases desplegadas, ruta crítica e hitos. El encabezado de la tabla se repite en cada página. Para el PDF, elige «Guardar como PDF» como impresora. Incluye los cambios sin guardar y lo indica.
 - **Exportación:** XML de Microsoft Project (MSPDI) con fases, hitos, calendarios, restricciones, vínculos, desfases, avance y línea base. Exporta lo guardado.
 
 ### Reglas de programación
