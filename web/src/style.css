@@ -2134,9 +2134,9 @@ button.danger:hover {
   flex: 0 0 var(--table-w);
   width: var(--table-w);
   display: grid;
-  grid-template-columns: 28px 42px minmax(130px, 1fr) 44px 54px 54px minmax(
-      190px,
-      1.5fr
+  grid-template-columns: 28px 42px var(--name-w, 220px) 44px 54px 54px var(
+      --preds-w,
+      220px
     );
   align-items: center;
   background: var(--surface);
@@ -2544,26 +2544,25 @@ button.danger:hover {
     grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   }
 }
+/* A planner too narrow for every column (decided by its own width, the
+   same measure that sizes the table). */
+.planner-scroll.compact .planner-cells {
+  grid-template-columns: 28px 34px minmax(120px, 1fr) 54px 0 0 minmax(
+      90px,
+      0.8fr
+    );
+}
+/* No room for the dates: change the duration instead. */
+.planner-scroll.compact .planner-cells > span:nth-child(5),
+.planner-scroll.compact .planner-cells > span:nth-child(6) {
+  padding: 0;
+  overflow: hidden;
+}
+.planner-scroll.compact .planner-cells > span:nth-child(5) > *,
+.planner-scroll.compact .planner-cells > span:nth-child(6) > * {
+  display: none;
+}
 @media (max-width: 760px) {
-  .planner-cells {
-    grid-template-columns: 28px 34px minmax(120px, 1fr) 54px 0 0 minmax(
-        90px,
-        0.8fr
-      );
-  }
-  .planner-cells > span:nth-child(5),
-  .planner-cells > span:nth-child(6) {
-    padding: 0;
-  }
-  /* No room for the dates on a phone: change the duration instead. */
-  .planner-cells > span:nth-child(5),
-  .planner-cells > span:nth-child(6) {
-    overflow: hidden;
-  }
-  .planner-cells > span:nth-child(5) > *,
-  .planner-cells > span:nth-child(6) > * {
-    display: none;
-  }
   .planner-save {
     margin-left: 0;
   }
@@ -2852,4 +2851,44 @@ details.details-card:not([open]) {
   .strength-bar i {
     transition: none;
   }
+}
+
+/* Column width handles in the schedule header. */
+.planner-head .resizable {
+  position: relative;
+  overflow: visible;
+}
+.col-resize {
+  position: absolute;
+  top: -12px;
+  bottom: -12px;
+  right: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.col-resize::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 4px;
+  width: 1px;
+  background: var(--border);
+}
+.col-resize:hover::after,
+.col-resize:focus-visible::after {
+  width: 3px;
+  left: 3px;
+  background: var(--green);
+}
+.col-resize:focus-visible {
+  outline: none;
+}
+
+/* A duration calculated from quantities. */
+.planner .cell[data-quantity] {
+  color: var(--green);
+  font-weight: 600;
 }

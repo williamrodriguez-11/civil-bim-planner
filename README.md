@@ -107,6 +107,9 @@ La tabla editable y el diagrama de Gantt comparten filas: desplazarse, seleccion
 
 - **Cargar actividades:** escribe el nombre y la duración (días laborables; 0 crea un hito). Enter añade otra fila, Tab pasa de celda y las flechas cambian de fila. Puedes pegar varias filas copiadas de Excel (columnas *nombre* y *duración*; la fila de encabezados se omite).
 - **Fases y orden:** selecciona actividades (Mayús+clic selecciona un rango) y pulsa *Agrupar en fase* (por ejemplo «Cimentación», «Estructura», «Instalaciones») o *Encadenar* para vincularlas en orden con fin a comienzo. Los códigos EDT se renumeran solos.
+- **Deshacer y rehacer:** botones *Deshacer* y *Rehacer* o Ctrl+Z / Ctrl+Y (también Ctrl+Mayús+Z). Guarda hasta 100 pasos; lo escrito seguido en una misma celda cuenta como un paso. Si deshaces hasta lo guardado, no queda nada por guardar.
+- **Ancho de columnas:** arrastra el borde derecho del encabezado *Actividad* o *Predecesoras* (o usa las flechas con el borde enfocado); doble clic vuelve al ancho normal. El ancho se recuerda en el navegador y siempre deja visible parte del Gantt.
+- **Días calculados con cantidades** aparecen en verde. Si escribes otro número, se usa el tuyo, como en Project, y un aviso permite volver a calcularlo.
 - **Inicio y Fin en la tabla:** pulsa la fecha y escribe otra. Cambiar el *Inicio* fija «No empezar antes del» esa fecha (como en Project); cambiar el *Fin* ajusta la duración en días laborables.
 - **Predecesoras:** escribe el número de fila como en Project (`1`, `1.2`, `1.2CC`, `3FC+2`, varias separadas por `;`) o búscalas por nombre. Cada vínculo muestra su código y su significado: **FC** «Empieza cuando termine…», **CC** «Empieza cuando empiece…», **FF** «Termina cuando termine…», **CF** «Termina cuando empiece…».
 - **Enlazar arrastrando:** arrastra una barra del Gantt hasta otra fila y esa actividad empezará cuando termine la primera.
