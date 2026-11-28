@@ -408,3 +408,71 @@ test("Imprimir o guardar el cronograma en PDF", async ({ page }, info) => {
   await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
   await expect(sheet).toHaveCount(0);
 });
+
+test("Importar un XML de Microsoft Project", async ({ page }) => {
+  await page.request.post("/api/auth/register", {
+    data: { username: "importar", password: "prueba de calendario" },
+  });
+  const project = await (
+    await page.request.post("/api/projects", { data: { name: "Obra" } })
+  ).json();
+  const xml = `<?xml version="1.0"?>
+<Project xmlns="http://schemas.microsoft.com/project">
+  <StartDate>2027-01-04T08:00:00</StartDate>
+  <Tasks>
+    <Task><UID>10</UID><Name>Obra gris</Name><OutlineLevel>1</OutlineLevel><Summary>1</Summary></Task>
+    <Task><UID>11</UID><Name>Muros</Name><OutlineLevel>2</OutlineLevel><Duration>PT24H0M0S</Duration></Task>
+    <Task><UID>12</UID><Name>Pañete</Name><OutlineLevel>2</OutlineLevel><Duration>PT16H0M0S</Duration>
+      <PredecessorLink><PredecessorUID>11</PredecessorUID><Type>1</Type></PredecessorLink>
+      <PredecessorLink><PredecessorUID>10</PredecessorUID><Type>1</Type></PredecessorLink></Task>
+  </Tasks>
+</Project>`;
+  await page.goto("/");
+  await page.getByRole("button", { name: "Programación", exact: true }).click();
+  await page.getByLabel("Inicio del proyecto").fill("2026-11-02");
+  await page.getByLabel("Primera actividad").fill("Algo que se reemplaza");
+
+  await page.locator('input[type="file"][accept*=".xml"]').setInputFiles({
+    name: "Desde Project.xml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(xml),
+  });
+  await expect(
+    page.getByText("Se importaron 2 actividades de «Desde Project.xml»"),
+  ).toBeVisible();
+  await expect(page.getByText("vínculos con tareas resumen")).toBeVisible();
+  await expect(page.getByLabel("Nombre de la fase 1")).toHaveValue("Obra gris");
+  await expect(page.getByLabel("Inicio del proyecto")).toHaveValue(
+    "2027-01-04",
+  );
+  await expect(
+    page.getByRole("button", { name: /^Inicio de Pañete:/ }),
+  ).toHaveText("7 ene");
+  await expect(
+    page.locator('input[value="Algo que se reemplaza"]'),
+  ).toHaveCount(0);
+
+  // Undo brings back what was there; redo the import and save it.
+  await page.getByRole("button", { name: "Deshacer" }).click();
+  await expect(
+    page.locator('input[value="Algo que se reemplaza"]'),
+  ).toHaveCount(1);
+  await page.getByRole("button", { name: "Rehacer" }).click();
+  await page.getByRole("button", { name: "Guardar cronograma" }).click();
+  await expect(page.getByText("Cronograma guardado.")).toBeVisible();
+  const saved = await (
+    await page.request.get(`/api/projects/${project.id}`)
+  ).json();
+  expect(saved.plan.tasks.map((t: { name: string }) => t.name)).toEqual([
+    "Muros",
+    "Pañete",
+  ]);
+
+  // A file that is not from Project is explained.
+  await page.locator('input[type="file"][accept*=".xml"]').setInputFiles({
+    name: "otro.xml",
+    mimeType: "application/xml",
+    buffer: Buffer.from("<root/>"),
+  });
+  await expect(page.getByRole("alert")).toContainText("Microsoft Project");
+});

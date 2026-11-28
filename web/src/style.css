@@ -3066,3 +3066,20 @@ details.details-card:not([open]) {
   margin-left: 0;
   transform: rotate(45deg) scale(0.8);
 }
+
+/* Importar XML: the file input lives inside its button. */
+label.btn {
+  cursor: pointer;
+}
+label.btn.disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+label.btn:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.import-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}

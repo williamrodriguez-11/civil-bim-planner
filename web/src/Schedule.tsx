@@ -23,6 +23,7 @@ import {
   Save,
   Trash2,
   Undo2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -388,6 +389,65 @@ export function Schedule({
   );
   const [draft, setDraftState] = useState<Plan>(restored ?? state.plan);
   const [dirty, setDirty] = useState(!!restored);
+  // What an import from Microsoft Project left out or changed.
+  const [imported, setImported] = useState<{
+    file: string;
+    count: number;
+    notes: string[];
+  } | null>(null);
+  const [importing, setImporting] = useState(false);
+  // A file that could not be read; the draft itself is still fine.
+  const [importError, setImportError] = useState("");
+
+  // An upload that answers after leaving the editor must not touch it.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  async function importXml(file: File) {
+    setImporting(true);
+    setImported(null);
+    setImportError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = await api<Timeline & { plan: Plan; notes: string[] }>(
+        `/projects/${pid}/plan/import`,
+        { method: "POST", body: form },
+      );
+      if (!mounted.current) return;
+      // A new plan: its own rows, nothing half-typed or selected from before.
+      document
+        .querySelectorAll<HTMLInputElement>(".pred-search")
+        .forEach((input) => (input.value = ""));
+      setDurations({});
+      setTyped({});
+      setEditing(null);
+      setSelected(new Set());
+      setAnchor(null);
+      setActive(null);
+      setFolded(new Set());
+      setRequest(null);
+      setUnlinked(null);
+      lastChange.current = { at: 0, field: null };
+      setDraft(result.plan);
+      setTimeline({ schedule: result.schedule, phases: result.phases });
+      setImported({
+        file: file.name,
+        count: result.plan.tasks.length,
+        notes: result.notes,
+      });
+    } catch (e) {
+      if (mounted.current) setImportError(cleanError(e));
+    } finally {
+      if (mounted.current) setImporting(false);
+    }
+  }
+
   // While true, the paper layout is mounted and the print dialog opens.
   const [printing, setPrinting] = useState(false);
   useEffect(() => {
@@ -540,6 +600,7 @@ export function Schedule({
     setAnchor(null);
     setActive(null);
     setFolded(new Set()); // phase codes may differ in the restored plan
+    setImported(null);
     document
       .querySelectorAll<HTMLInputElement>(".pred-search")
       .forEach((input) => (input.value = ""));
@@ -1055,6 +1116,7 @@ export function Schedule({
       setDurations({});
       lastChange.current = { at: 0, field: null };
       setNotice("Cronograma guardado.");
+      setImported(null);
       setUnlinked(null);
       setRequest(null);
     } catch (e) {
@@ -1326,7 +1388,11 @@ export function Schedule({
           <button
             className="primary"
             disabled={
-              !dirty || saving || !!problem || !!Object.keys(localErrors).length
+              !dirty ||
+              saving ||
+              importing ||
+              !!problem ||
+              !!Object.keys(localErrors).length
             }
             onClick={save}
           >
@@ -1483,7 +1549,48 @@ export function Schedule({
         >
           <Download size={15} /> Exportar XML
         </a>
+        <label
+          className={"btn" + (importing || saving ? " disabled" : "")}
+          title="Trae un cronograma guardado como XML desde Microsoft Project"
+        >
+          <Upload size={15} /> {importing ? "Importando…" : "Importar XML"}
+          <input
+            type="file"
+            accept=".xml,application/xml,text/xml"
+            className="sr-only"
+            disabled={importing || saving}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void importXml(file);
+            }}
+          />
+        </label>
       </div>
+      {importError && (
+        <div className="error planner-problem" role="alert">
+          <span>No se importó el archivo: {importError}</span>
+          <button onClick={() => setImportError("")}>Cerrar</button>
+        </div>
+      )}
+      {imported && (
+        <div className="notice planner-problem" role="status">
+          <span>
+            Se importaron {imported.count}{" "}
+            {imported.count === 1 ? "actividad" : "actividades"} de «
+            {imported.file}». Revísalas y pulsa <b>Guardar cronograma</b>; si no
+            era lo que querías, pulsa <b>Deshacer</b>.
+            {!!imported.notes.length && (
+              <ul className="import-notes">
+                {imported.notes.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            )}
+          </span>
+          <button onClick={() => setImported(null)}>Entendido</button>
+        </div>
+      )}
 
       {stale && (
         <div className="notice planner-problem" role="status">
