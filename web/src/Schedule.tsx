@@ -6,6 +6,7 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   CalendarDays,
   ChevronDown,
@@ -17,6 +18,7 @@ import {
   Link2,
   Maximize2,
   Plus,
+  Printer,
   Redo2,
   Save,
   Trash2,
@@ -51,6 +53,7 @@ import {
   rows as outlineRows,
   ungroup,
   type Node,
+  type Row,
 } from "./outline";
 
 const RELATIONS: Record<
@@ -385,6 +388,21 @@ export function Schedule({
   );
   const [draft, setDraftState] = useState<Plan>(restored ?? state.plan);
   const [dirty, setDirty] = useState(!!restored);
+  // While true, the paper layout is mounted and the print dialog opens.
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    if (!printing) return;
+    const done = () => setPrinting(false);
+    window.addEventListener("afterprint", done);
+    // Let the paper layout render before the dialog takes its snapshot.
+    const frame = requestAnimationFrame(() => {
+      window.print();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("afterprint", done);
+    };
+  }, [printing]);
   const [timeline, setTimeline] = useState<Timeline>({
     schedule: state.schedule,
     phases: state.phases ?? [],
@@ -1445,6 +1463,17 @@ export function Schedule({
         {baselineSet && (
           <button onClick={() => setBaseline(true)}>Quitar línea base</button>
         )}
+        <button
+          onClick={() => setPrinting(true)}
+          disabled={!timeline.schedule.length || !fresh || printing}
+          title={
+            !fresh
+              ? "Espera a que se recalculen las fechas"
+              : "Imprime el cronograma o guárdalo en PDF"
+          }
+        >
+          <Printer size={15} /> Imprimir / PDF
+        </button>
         <a
           className={"btn" + (dirty ? " disabled" : "")}
           aria-disabled={dirty}
@@ -2352,6 +2381,20 @@ export function Schedule({
           }}
         />
       )}
+      {printing &&
+        createPortal(
+          <div className="print-root">
+            <PrintSchedule
+              title={state.project.name}
+              rows={outlineRows(tree, new Set())}
+              schedule={computed}
+              phases={new Map(timeline.phases.map((p) => [p.code, p]))}
+              names={names}
+              unsaved={dirty}
+            />
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }
@@ -3044,5 +3087,206 @@ function CalendarDialog({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** The whole schedule laid out for paper: every phase unfolded, the table
+ * on the left and the Gantt scaled to the page width. The browser's print
+ * dialog prints it or saves it as PDF. */
+function PrintSchedule({
+  title,
+  rows,
+  schedule,
+  phases,
+  names,
+  unsaved,
+}: {
+  title: string;
+  rows: Row[];
+  schedule: Map<number, Scheduled>;
+  phases: Map<string, Phase>;
+  names: Map<number, string>;
+  unsaved: boolean;
+}) {
+  const spans = [
+    ...[...schedule.values()].map((r) => [r.start, r.finish]),
+    ...[...phases.values()].map((p) => [p.start, p.finish]),
+  ];
+  if (!spans.length) return null;
+  // A day of margin on each side, so nothing touches the edges.
+  const origin = Math.min(...spans.map(([s]) => toDay(s))) - 1;
+  const end = Math.max(...spans.map(([, f]) => toDay(f))) + 2;
+  const span = Math.max(1, end - origin);
+  const pos = (date: string, after = false) =>
+    ((toDay(date) + (after ? 1 : 0) - origin) / span) * 100;
+  // Weeks for short schedules, months otherwise.
+  const ticks: { left: number; text: string }[] = [];
+  // Weeks for short schedules; then months, quarters or years, so the
+  // labels never crowd the page.
+  const weekly = span <= 70;
+  const months = span / 30.4;
+  const step = months <= 14 ? 1 : months <= 40 ? 3 : 12;
+  for (let d = origin; d < end; d++) {
+    const date = new Date(d * DAY);
+    const tick = weekly
+      ? date.getUTCDay() === 1
+      : date.getUTCDate() === 1 && date.getUTCMonth() % step === 0;
+    if (tick)
+      ticks.push({
+        left: ((d - origin) / span) * 100,
+        text:
+          step === 12 && !weekly
+            ? String(date.getUTCFullYear())
+            : label(
+                fromDay(d),
+                weekly
+                  ? { day: "numeric", month: "short" }
+                  : { month: "short", year: "2-digit" },
+              ),
+      });
+  }
+  const first = fromDay(origin + 1);
+  const last = fromDay(end - 2);
+  // Short dates with the year when the schedule crosses one.
+  const crosses = first.slice(0, 4) !== last.slice(0, 4);
+  const day = (s: string) => cellDate(s) + (crosses ? ` ${s.slice(2, 4)}` : "");
+  return (
+    <div className="print-sheet">
+      <div className="print-header">
+        <div>
+          <h1>{title}</h1>
+          <p>
+            Cronograma del {longDate(first)} al {longDate(last)}
+            {unsaved && " · incluye cambios sin guardar"}
+          </p>
+        </div>
+        <p className="print-meta">
+          Impreso el {longDate(today())}
+          <br />
+          CIVIL BIM Planner
+        </p>
+      </div>
+      <table className="print-table">
+        <thead>
+          <tr>
+            <th className="p-wbs">EDT</th>
+            <th className="p-name">Actividad</th>
+            <th className="p-num">Días</th>
+            <th className="p-date">Inicio</th>
+            <th className="p-date">Fin</th>
+            <th className="p-gantt">
+              <div className="print-axis">
+                {ticks.map((t) => (
+                  <span key={t.left} style={{ left: `${t.left}%` }}>
+                    {t.text}
+                  </span>
+                ))}
+              </div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            if (r.kind === "phase") {
+              const p = phases.get(r.code);
+              return (
+                <tr key={"p" + r.code} className="p-phase">
+                  <td className="p-wbs">{r.code}</td>
+                  <td
+                    className="p-name"
+                    style={{ paddingLeft: 4 + r.depth * 10 }}
+                  >
+                    {r.name}
+                  </td>
+                  <td className="p-num">{p ? p.duration : ""}</td>
+                  <td className="p-date">{p ? day(p.start) : ""}</td>
+                  <td className="p-date">{p ? day(p.finish) : ""}</td>
+                  <td className="p-gantt">
+                    <div className="print-track">
+                      {ticks.map((t) => (
+                        <i
+                          key={t.left}
+                          className="print-grid"
+                          style={{ left: `${t.left}%` }}
+                        />
+                      ))}
+                      {p && (
+                        <b
+                          className="print-phase"
+                          style={{
+                            left: `${pos(p.start)}%`,
+                            width: `${pos(p.finish, true) - pos(p.start)}%`,
+                          }}
+                        />
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            }
+            const c = schedule.get(r.id);
+            if (!c) return null;
+            return (
+              <tr key={r.id}>
+                <td className="p-wbs">{c.wbs}</td>
+                <td
+                  className="p-name"
+                  style={{ paddingLeft: 4 + r.depth * 10 }}
+                >
+                  {names.get(r.id)}
+                </td>
+                <td className="p-num">{c.milestone ? "Hito" : c.duration}</td>
+                <td className="p-date">{day(c.start)}</td>
+                <td className="p-date">{day(c.finish)}</td>
+                <td className="p-gantt">
+                  <div className="print-track">
+                    {ticks.map((t) => (
+                      <i
+                        key={t.left}
+                        className="print-grid"
+                        style={{ left: `${t.left}%` }}
+                      />
+                    ))}
+                    {c.milestone ? (
+                      <b
+                        className={
+                          "print-milestone" + (c.critical ? " critical" : "")
+                        }
+                        style={{ left: `${pos(c.start, !!c.at_day_end)}%` }}
+                      />
+                    ) : (
+                      <b
+                        className={
+                          "print-bar" + (c.critical ? " critical" : "")
+                        }
+                        style={{
+                          left: `${pos(c.start)}%`,
+                          width: `${Math.max(0.3, pos(c.finish, true) - pos(c.start))}%`,
+                        }}
+                      />
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="print-legend">
+        <span>
+          <b className="print-bar" /> Actividad
+        </span>
+        <span>
+          <b className="print-bar critical" /> Ruta crítica
+        </span>
+        <span>
+          <b className="print-phase" /> Fase
+        </span>
+        <span>
+          <b className="print-milestone" /> Hito
+        </span>
+        <span>Duraciones en días laborables.</span>
+      </p>
+    </div>
   );
 }

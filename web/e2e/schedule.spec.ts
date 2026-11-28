@@ -342,3 +342,69 @@ test("Deshacer y rehacer cambios del cronograma", async ({ page }) => {
     page.getByRole("button", { name: "Guardar cronograma" }),
   ).toBeDisabled();
 });
+
+test("Imprimir o guardar el cronograma en PDF", async ({ page }, info) => {
+  await page.addInitScript(() => {
+    (window as unknown as { printed: number }).printed = 0;
+    window.print = () => {
+      (window as unknown as { printed: number }).printed++;
+    };
+  });
+  await page.request.post("/api/auth/register", {
+    data: { username: "imprimir", password: "prueba de calendario" },
+  });
+  await page.request.post("/api/projects", {
+    data: { name: "Edificio Las Palmas" },
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Programación", exact: true }).click();
+  await page.getByLabel("Inicio del proyecto").fill("2026-11-02");
+  await page.getByLabel("Primera actividad").fill("Excavación");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("5");
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Zapatas");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Entrega cimentación");
+  await page
+    .getByLabel("Duración en días laborables de Entrega cimentación")
+    .fill("0");
+  for (const [name, pred] of [
+    ["Zapatas", "1"],
+    ["Entrega cimentación", "2"],
+  ]) {
+    const box = page.getByLabel(`Buscar predecesora de ${name}`);
+    await box.fill(pred);
+    await box.press("Enter");
+  }
+  const print = page.getByRole("button", { name: "Imprimir / PDF" });
+  await expect(print).toBeEnabled();
+  await print.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { printed: number }).printed),
+    )
+    .toBe(1);
+  const sheet = page.locator(".print-root");
+  // Hidden on screen, so look it up without roles.
+  await expect(sheet.locator("h1")).toHaveText("Edificio Las Palmas");
+  await expect(sheet.locator("tbody tr")).toHaveCount(3);
+  await expect(sheet).toContainText("incluye cambios sin guardar");
+  await expect(sheet.locator(".print-milestone").first()).toBeAttached();
+
+  // On paper only the sheet shows.
+  await page.emulateMedia({ media: "print" });
+  await expect(sheet).toBeVisible();
+  await expect(page.locator("#root")).toBeHidden();
+  await page.pdf({
+    path: info.outputPath("cronograma.pdf"),
+    landscape: true,
+    format: "A4",
+  });
+
+  // Closing the print dialog removes it.
+  await page.emulateMedia({ media: "screen" });
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await expect(sheet).toHaveCount(0);
+});
