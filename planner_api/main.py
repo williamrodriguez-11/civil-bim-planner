@@ -31,6 +31,7 @@ from .db import INTEGRITY_ERRORS, close_pools, connect, database_url, initialize
 from .models import ArchiveIssue, Mapping, Options, Plan, Project, ReportOptions
 from .planning import ScheduleError, phases, schedule
 from .project_xml import project_xml
+from .project_import import plan_from_xml
 from . import social
 from .tables import (
     MAX_BYTES,
@@ -792,6 +793,59 @@ def update_plan(pid: int, plan: Plan, revision: int = Header(alias="If-Match")):
         )
         log(db, pid, "Cronograma actualizado")
     return {"id": pid}
+
+
+@project_routes.post("/plan/import")
+def import_plan(pid: int, file: UploadFile = File()):
+    """Read a Microsoft Project XML into a draft plan; nothing is saved."""
+    data = file.file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise HTTPException(413, "El archivo supera el tamaño máximo permitido.")
+    with connect() as db:
+        current = Plan.model_validate_json(project(db, pid)["plan"])
+        durations = {}
+        if any(t.quantity for t in current.tasks):
+            try:
+                durations = {
+                    r["id"]: r["duration"]
+                    for r in scheduled(current, results(db, pid))
+                }
+            except ValueError:
+                pass  # without them, quantity links are simply not kept
+        plan, notes = plan_from_xml(data, current, durations)
+        linked = sorted({t.quantity.table for t in plan.tasks if t.quantity})
+        data_rows = results(db, pid, linked)
+    # Project accepts «must finish on» dates that conflict with their
+    # predecessors (negative slack); the app does not, so the ones that
+    # conflict are dropped, one at a time, and named.
+    relaxed = []
+    while True:
+        try:
+            result = timeline(plan, data_rows)
+            break
+        except ScheduleError as exc:
+            task = next((t for t in plan.tasks if t.id == exc.task), None)
+            if exc.field != "fixed_finish" or not task or not task.fixed_finish:
+                raise
+            relaxed.append(str(exc))
+            plan = plan.model_copy(
+                update={
+                    "tasks": [
+                        t.model_copy(update={"fixed_finish": None})
+                        if t.id == task.id
+                        else t
+                        for t in plan.tasks
+                    ]
+                }
+            )
+    if relaxed:
+        more = f" (y {len(relaxed) - 5} más)" if len(relaxed) > 5 else ""
+        notes.append(
+            "Se quitó «Terminar exactamente el» donde la app no podía cumplirlo: "
+            + " ".join(relaxed[:5])
+            + more
+        )
+    return {"plan": plan.model_dump(mode="json"), "notes": notes, **result}
 
 
 @project_routes.get("/schedule.xml")
