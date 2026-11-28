@@ -305,3 +305,40 @@ test("Como en Project: fechas en la tabla, predecesoras por número y enlazar ar
   await page.getByRole("button", { name: /Quitar el vínculo con/ }).click();
   await expect(date("Inicio", "Zapatas")).toHaveText("20 nov");
 });
+
+test("Deshacer y rehacer cambios del cronograma", async ({ page }) => {
+  await page.request.post("/api/auth/register", {
+    data: { username: "deshacer", password: "prueba de calendario" },
+  });
+  await page.request.post("/api/projects", { data: { name: "Obra" } });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Programación", exact: true }).click();
+  await page.getByLabel("Inicio del proyecto").fill("2026-11-02");
+  await page.getByLabel("Primera actividad").fill("Excavación");
+  const undo = page.getByRole("button", { name: "Deshacer" });
+  const redo = page.getByRole("button", { name: "Rehacer" });
+  await expect(redo).toBeDisabled();
+
+  const days = page.getByLabel("Duración en días laborables de Excavación");
+  await days.fill("5");
+  await page.waitForTimeout(1600); // a separate step from the typing above
+  await days.fill("9");
+  await expect(days).toHaveValue("9");
+
+  // Ctrl+Z goes back one step, Ctrl+Y forward again.
+  await page.keyboard.press("Control+z");
+  await expect(days).toHaveValue("5");
+  await expect(page.getByText("Se deshizo el último cambio.")).toBeVisible();
+  await page.keyboard.press("Control+y");
+  await expect(days).toHaveValue("9");
+
+  // The buttons do the same; undoing everything leaves nothing to save.
+  await undo.click();
+  await expect(days).toHaveValue("5");
+  await expect(redo).toBeEnabled();
+  for (let i = 0; i < 10 && (await undo.isEnabled()); i++) await undo.click();
+  await expect(undo).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Guardar cronograma" }),
+  ).toBeDisabled();
+});

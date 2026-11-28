@@ -17,8 +17,10 @@ import {
   Link2,
   Maximize2,
   Plus,
+  Redo2,
   Save,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import {
@@ -123,6 +125,19 @@ function firstWorkday(from: string, plan: Plan, calendar?: string) {
   for (let d = toDay(from), end = d + 3660; d <= end; d++)
     if (workdays(fromDay(d), fromDay(d), plan, calendar)) return fromDay(d);
   return null;
+}
+
+/** JSON with object keys in order, to compare plans by value. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.keys(v)
+            .sort()
+            .map((k) => [k, (v as Record<string, unknown>)[k]]),
+        )
+      : v,
+  );
 }
 
 const COLS_KEY = "civil-schedule-columns";
@@ -445,7 +460,38 @@ export function Schedule({
     }
   }, [cols]);
 
-  function setDraft(plan: Plan) {
+  // Undo and redo, as in Project: every change keeps the plan it replaced.
+  // Changes within a moment of each other (typing a name) count as one.
+  const past = useRef<Plan[]>([]);
+  const future = useRef<Plan[]>([]);
+  const lastChange = useRef<{ at: number; field: string | null }>({
+    at: 0,
+    field: null,
+  });
+  const [, setHistoryTick] = useState(0);
+
+  function setDraft(plan: Plan, fromHistory = false) {
+    if (!fromHistory && plan !== latest.current) {
+      // Keystrokes in the same text cell make one step; anything else
+      // (buttons, pasting, another cell) starts a new one.
+      const now = Date.now();
+      const el = document.activeElement as HTMLInputElement | null;
+      const field =
+        el?.tagName === "INPUT" && (el.dataset.task || "plan" in el.dataset)
+          ? el.id || null
+          : null;
+      const typing =
+        field !== null &&
+        field === lastChange.current.field &&
+        now - lastChange.current.at < 1500;
+      if (!typing || !past.current.length) {
+        past.current.push(latest.current);
+        if (past.current.length > 100) past.current.shift();
+      }
+      lastChange.current = { at: now, field };
+      future.current = [];
+      setHistoryTick((n) => n + 1);
+    }
     latest.current = plan;
     setDraftState(plan);
     setDirty(true);
@@ -463,6 +509,66 @@ export function Schedule({
     } catch {
       // Keeping the draft across reloads is only a convenience.
     }
+  }
+
+  function travel(back: boolean) {
+    const from = back ? past.current : future.current;
+    const to = back ? future.current : past.current;
+    const plan = from.pop();
+    if (!plan || saving) return;
+    to.push(latest.current);
+    lastChange.current = { at: 0, field: null }; // the next edit is a new step
+    setSelected(new Set());
+    setAnchor(null);
+    setActive(null);
+    setFolded(new Set()); // phase codes may differ in the restored plan
+    document
+      .querySelectorAll<HTMLInputElement>(".pred-search")
+      .forEach((input) => (input.value = ""));
+    // Half-typed cells belong to the plan being left.
+    setDurations({});
+    setTyped({});
+    setEditing(null);
+    setRequest(null);
+    setUnlinked(null);
+    setDraft(plan, true);
+    // Back at what is saved: nothing left to save.
+    if (stableJson(cleaned(plan)) === stableJson(cleaned(state.plan))) {
+      setDirty(false);
+      setTimeline({ schedule: state.schedule, phases: state.phases ?? [] });
+      setFresh(true);
+      setProblem(null);
+      try {
+        sessionStorage.removeItem(storeKey);
+      } catch {
+        // Nothing to clean.
+      }
+    }
+    setNotice(back ? "Se deshizo el último cambio." : "Se rehízo el cambio.");
+    setHistoryTick((n) => n + 1);
+  }
+
+  function onUndoKeys(e: React.KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    const redo = key === "y" || (key === "z" && e.shiftKey);
+    if (key !== "z" && !redo) return;
+    // Text that is not in the plan yet keeps the field's own undo: other
+    // fields (a new phase name, dates being picked), a predecessor still
+    // being typed, or a duration that is not valid yet.
+    const target = e.target as HTMLInputElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
+      // Cells whose text is already in the plan go through its history.
+      if (!target.dataset.task && !("plan" in target.dataset)) return;
+      if (target.classList.contains("pred-search") && target.value) return;
+      if (
+        target.dataset.field === "duration" &&
+        durations[Number(target.dataset.task)] !== undefined
+      )
+        return;
+    }
+    e.preventDefault();
+    travel(!redo);
   }
 
   // Saved elsewhere (or just saved here): show the stored plan.
@@ -580,6 +686,7 @@ export function Schedule({
   );
 
   function restructure(next: Node[], change?: (plan: Plan) => Plan) {
+    lastChange.current = { at: 0, field: null }; // its own undo step
     const { plan, codes } = renumber(next, change ? change(draft) : draft);
     setFolded(
       (f) =>
@@ -828,6 +935,7 @@ export function Schedule({
     const text = e.clipboardData.getData("text/plain");
     if (!/[\n\t]/.test(text.trim())) return; // a single value: normal paste
     const items = parsePaste(text);
+    lastChange.current = { at: 0, field: null }; // its own undo step
     if (!items.length) return;
     e.preventDefault();
     const focused = Number(
@@ -927,6 +1035,7 @@ export function Schedule({
       }
       setDirty(false);
       setDurations({});
+      lastChange.current = { at: 0, field: null };
       setNotice("Cronograma guardado.");
       setUnlinked(null);
       setRequest(null);
@@ -997,6 +1106,7 @@ export function Schedule({
   const span = last - origin + 1;
   // Below this the dates don't fit; the planner's own width decides it.
   const narrow = width < 620;
+  const canResize = !narrow && width - 240 - FIXED_COLS > 260;
   // The chosen widths, shrunk if needed so at least 240 px of Gantt shows.
   const room = Math.max(240, width - 240 - FIXED_COLS);
   // As chosen, within the room left for them: «Actividad» first, then
@@ -1172,7 +1282,7 @@ export function Schedule({
   const baselineSet = Object.keys(draft.baseline ?? {}).length > 0;
 
   return (
-    <section className="panel planner">
+    <section className="panel planner" onKeyDown={onUndoKeys}>
       <div className="planner-top">
         <label className="planner-start">
           Inicio del proyecto
@@ -1213,6 +1323,22 @@ export function Schedule({
         aria-label="Edición del cronograma"
         inert={saving}
       >
+        <button
+          onClick={() => travel(true)}
+          disabled={!past.current.length}
+          title="Deshacer (Ctrl+Z)"
+          aria-keyshortcuts="Control+Z"
+        >
+          <Undo2 size={15} /> Deshacer
+        </button>
+        <button
+          onClick={() => travel(false)}
+          disabled={!future.current.length}
+          title="Rehacer (Ctrl+Y)"
+          aria-keyshortcuts="Control+Y"
+        >
+          <Redo2 size={15} /> Rehacer
+        </button>
         <button
           onClick={() =>
             addTasks(
@@ -1504,7 +1630,7 @@ export function Schedule({
                 <span>EDT</span>
                 <span className="resizable">
                   Actividad
-                  {!narrow && (
+                  {canResize && (
                     <ColumnResizer
                       label="Actividad"
                       value={shown.name}
@@ -1520,7 +1646,7 @@ export function Schedule({
                 <span>Fin</span>
                 <span className="resizable">
                   Predecesoras
-                  {!narrow && (
+                  {canResize && (
                     <ColumnResizer
                       label="Predecesoras"
                       value={shown.preds}
@@ -1679,6 +1805,8 @@ export function Schedule({
                           </button>
                           <input
                             className="cell"
+                            id={`phase-${r.code}-name`}
+                            data-plan=""
                             aria-label={`Nombre de la fase ${r.code}`}
                             value={r.name}
                             maxLength={160}
@@ -1837,6 +1965,12 @@ export function Schedule({
                               setDurations(rest);
                               // A duration typed over one calculated with
                               // quantities wins, as in Project; it can be undone.
+                              // The same number as calculated: keep the link.
+                              if (
+                                t.quantity &&
+                                Number(raw) === (c?.duration ?? t.duration)
+                              )
+                                return;
                               if (t.quantity)
                                 setUnlinked({ id: r.id, quantity: t.quantity });
                               patchTask(r.id, {
